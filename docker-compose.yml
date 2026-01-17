@@ -1,0 +1,11 @@
+services:
+  tpdb-provider:
+    build: .
+    container_name: tpdb-provider
+    ports:
+      - "32500:32500"
+    environment:
+      - TPDB_API_KEY=${TPDB_API_KEY}
+      - TPDB_PORT=32500
+      - TPDB_LOG_LEVEL=INFO
+    restart: unless-stopped
