@@ -41,8 +41,8 @@ async def match_media(request: Request):
             status_code=200,
         )
 
-    # Only handle movie type (1)
-    if media_type != 1:
+    # Handle movie type (1) and other videos type (4)
+    if media_type not in (1, 4):
         logger.warning("Unsupported media type: %s", media_type)
         return JSONResponse(
             content={"MediaContainer": {"Metadata": []}},
@@ -50,7 +50,7 @@ async def match_media(request: Request):
         )
 
     service = get_match_service()
-    matches = service.search(title, year=year)
+    matches = service.search(title, year=year, media_type=media_type)
 
     response = {
         "MediaContainer": {

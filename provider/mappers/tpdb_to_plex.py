@@ -2,8 +2,17 @@
 
 from typing import Any
 
+# Plex type mappings
+PLEX_TYPE_MOVIE = 1
+PLEX_TYPE_OTHER = 4
 
-def map_scene_to_match(scene: dict[str, Any], score: int = 100) -> dict[str, Any]:
+TYPE_STRINGS = {
+    PLEX_TYPE_MOVIE: "movie",
+    PLEX_TYPE_OTHER: "clip",
+}
+
+
+def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int = 1) -> dict[str, Any]:
     """
     Map a TPDB scene to a Plex match result.
 
@@ -12,6 +21,7 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100) -> dict[str, Any
     Args:
         scene: TPDB scene data
         score: Match confidence score (0-100)
+        media_type: Plex media type (1=movie, 4=other videos)
 
     Returns:
         Plex-formatted match result with full metadata
@@ -41,9 +51,10 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100) -> dict[str, Any
     if duration:
         duration = int(duration) * 1000
 
+    type_str = TYPE_STRINGS.get(media_type, "movie")
     match_result = {
-        "type": "movie",
-        "guid": f"tv.plex.agents.custom.tpdb://movie/{slug}",
+        "type": type_str,
+        "guid": f"tv.plex.agents.custom.tpdb://{type_str}/{slug}",
         "key": f"/library/metadata/{slug}",
         "ratingKey": slug,
         "title": title,
@@ -105,12 +116,13 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100) -> dict[str, Any
     return match_result
 
 
-def map_scene_to_metadata(scene: dict[str, Any]) -> dict[str, Any]:
+def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[str, Any]:
     """
     Map a TPDB scene to full Plex metadata.
 
     Args:
         scene: TPDB scene data
+        media_type: Plex media type (1=movie, 4=other videos)
 
     Returns:
         Plex-formatted metadata
@@ -140,9 +152,10 @@ def map_scene_to_metadata(scene: dict[str, Any]) -> dict[str, Any]:
     if duration:
         duration = int(duration) * 1000  # Integer milliseconds for Plex
 
+    type_str = TYPE_STRINGS.get(media_type, "movie")
     metadata = {
-        "type": "movie",
-        "guid": f"tv.plex.agents.custom.tpdb://movie/{slug}",
+        "type": type_str,
+        "guid": f"tv.plex.agents.custom.tpdb://{type_str}/{slug}",
         "key": f"/library/metadata/{slug}",
         "ratingKey": slug,
         "title": title,

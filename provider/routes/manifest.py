@@ -20,7 +20,11 @@ async def get_manifest():
                 {
                     "type": 1,  # Movie type
                     "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
-                }
+                },
+                {
+                    "type": 4,  # Other Videos type
+                    "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
+                },
             ],
             "Feature": [
                 {"type": "match", "key": "/library/metadata/matches"},
