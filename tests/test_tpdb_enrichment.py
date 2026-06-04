@@ -36,7 +36,7 @@ class MapperEnrichmentTests(unittest.TestCase):
             metadata.get("Role"),
             [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
         )
-        self.assertEqual(metadata.get("isAdult"), 1)
+        self.assertIs(metadata.get("isAdult"), True)
         self.assertEqual(
             metadata.get("Guid"),
             [{"id": "imdb://tt1234567"}, {"id": "tmdb://98765"}, {"id": "tpdb://123"}],
@@ -57,7 +57,7 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
-        self.assertEqual(match.get("isAdult"), 1)
+        self.assertIs(match.get("isAdult"), True)
         self.assertEqual(match.get("Guid"), [{"id": "tvdb://321"}, {"id": "tpdb://123"}])
 
     def test_studio_added_to_match_collection_without_duplicates(self):
