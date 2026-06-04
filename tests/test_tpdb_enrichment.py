@@ -17,7 +17,7 @@ class MapperEnrichmentTests(unittest.TestCase):
             "site": {"name": "Studio"},
             "performers": [{"id": "p1", "name": "Performer", "thumb": "https://img/p.jpg"}],
             "directors": [{"name": "Director One"}, {"name": "Director Two"}],
-            "series": [{"name": "Series A"}],
+            "series": [{"name": "Series A"}, {"name": "Studio"}],
             "franchise": "Franchise B",
             "imdb_id": "tt1234567",
             "ids": {"tmdb": "98765"},
@@ -30,7 +30,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         self.assertEqual(metadata.get("Director"), [{"tag": "Director One"}, {"tag": "Director Two"}])
         self.assertEqual(
             metadata.get("Collection"),
-            [{"tag": "Series A"}, {"tag": "Franchise B"}, {"tag": "Studio"}],
+            [{"tag": "Series A"}, {"tag": "Studio"}, {"tag": "Franchise B"}],
         )
         self.assertEqual(
             metadata.get("Role"),
@@ -86,6 +86,17 @@ class MapperEnrichmentTests(unittest.TestCase):
             match.get("Role"),
             [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
         )
+
+    def test_match_maps_performer_without_image(self):
+        scene = {
+            "id": "123",
+            "title": "Scene",
+            "performers": [{"id": "p1", "name": "Performer"}],
+        }
+
+        match = map_scene_to_match(scene)
+
+        self.assertEqual(match.get("Role"), [{"tag": "Performer", "id": "tpdb://performer/p1"}])
 
     def test_map_scene_to_images_returns_unique_image_urls(self):
         scene = {
