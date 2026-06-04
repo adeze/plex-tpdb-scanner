@@ -15,10 +15,13 @@ class MapperEnrichmentTests(unittest.TestCase):
             "image": {"url": "https://img/poster.jpg"},
             "art": "https://img/art.jpg",
             "site": {"name": "Studio"},
-            "performers": [{"name": "Performer", "thumb": "https://img/p.jpg"}],
+            "performers": [{"id": "p1", "name": "Performer", "thumb": "https://img/p.jpg"}],
             "directors": [{"name": "Director One"}, {"name": "Director Two"}],
             "series": [{"name": "Series A"}],
             "franchise": "Franchise B",
+            "isAdult": True,
+            "imdb_id": "tt1234567",
+            "ids": {"tmdb": "98765"},
         }
 
         metadata = map_scene_to_metadata(scene)
@@ -30,7 +33,15 @@ class MapperEnrichmentTests(unittest.TestCase):
             metadata.get("Collection"),
             [{"tag": "Series A"}, {"tag": "Franchise B"}],
         )
-        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "thumb": "https://img/p.jpg"}])
+        self.assertEqual(
+            metadata.get("Role"),
+            [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
+        )
+        self.assertTrue(metadata.get("isAdult"))
+        self.assertEqual(
+            metadata.get("Guid"),
+            [{"id": "imdb://tt1234567"}, {"id": "tmdb://98765"}, {"id": "tpdb://123"}],
+        )
 
     def test_match_supports_nested_images(self):
         scene = {
@@ -40,12 +51,16 @@ class MapperEnrichmentTests(unittest.TestCase):
                 "poster": {"src": "https://img/poster.jpg"},
                 "background": {"url": "https://img/bg.jpg"},
             },
+            "adult": "true",
+            "external_ids": {"tvdb_id": "321"},
         }
 
         match = map_scene_to_match(scene)
 
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
+        self.assertTrue(match.get("isAdult"))
+        self.assertEqual(match.get("Guid"), [{"id": "tvdb://321"}, {"id": "tpdb://123"}])
 
     def test_map_scene_to_images_returns_unique_image_urls(self):
         scene = {
@@ -67,7 +82,7 @@ class MapperEnrichmentTests(unittest.TestCase):
             "title": "Scene",
             "posters": {"large": "https://img/poster-large.jpg"},
             "background": {"full": "https://img/background-full.jpg"},
-            "performers": [{"name": "Performer", "face": "https://img/performer-face.jpg"}],
+            "performers": [{"slug": "perf-slug", "name": "Performer", "face": "https://img/performer-face.jpg"}],
         }
 
         metadata = map_scene_to_metadata(scene)
@@ -76,7 +91,10 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(metadata.get("thumb"), "https://img/poster-large.jpg")
         self.assertEqual(metadata.get("art"), "https://img/background-full.jpg")
-        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "thumb": "https://img/performer-face.jpg"}])
+        self.assertEqual(
+            metadata.get("Role"),
+            [{"tag": "Performer", "id": "tpdb://performer/perf-slug", "thumb": "https://img/performer-face.jpg"}],
+        )
         self.assertEqual(image_by_type.get("poster"), "https://img/poster-large.jpg")
         self.assertEqual(image_by_type.get("art"), "https://img/background-full.jpg")
 
