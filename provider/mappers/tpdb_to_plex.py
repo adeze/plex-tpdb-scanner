@@ -12,6 +12,127 @@ TYPE_STRINGS = {
 }
 
 
+def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
+    """Extract a useful string from scalar or nested payload values."""
+    if depth > max_depth:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("url", "src", "path", "image", "poster", "thumb"):
+            nested = _extract_string(value.get(key), depth=depth + 1, max_depth=max_depth)
+            if nested:
+                return nested
+    if isinstance(value, list):
+        for item in value:
+            nested = _extract_string(item, depth=depth + 1, max_depth=max_depth)
+            if nested:
+                return nested
+    return ""
+
+
+def _get_first_image(payload: dict[str, Any], fields: tuple[str, ...]) -> str:
+    """Return the first non-empty image-like value from known fields."""
+    for field in fields:
+        if field in payload:
+            image = _extract_string(payload.get(field))
+            if image:
+                return image
+    return ""
+
+
+def _get_scene_poster(scene: dict[str, Any]) -> str:
+    """Choose the best poster/thumb-like image from a scene payload."""
+    poster = _get_first_image(
+        scene,
+        ("poster", "cover", "cover_image", "thumb", "image", "background", "art"),
+    )
+    if poster:
+        return poster
+    images = scene.get("images")
+    if isinstance(images, dict):
+        return _get_first_image(
+            images,
+            ("poster", "cover", "cover_image", "thumb", "image", "background", "art"),
+        )
+    if isinstance(images, list):
+        return _extract_string(images)
+    return ""
+
+
+def _get_scene_art(scene: dict[str, Any]) -> str:
+    """Choose the best background/art-like image from a scene payload."""
+    background = _get_first_image(
+        scene,
+        ("background", "art", "fanart", "backdrop", "image", "poster", "thumb"),
+    )
+    if background:
+        return background
+    images = scene.get("images")
+    if isinstance(images, dict):
+        return _get_first_image(
+            images,
+            ("background", "art", "fanart", "backdrop", "image", "poster", "thumb"),
+        )
+    if isinstance(images, list):
+        return _extract_string(images)
+    return ""
+
+
+def _normalize_people(items: Any) -> list[dict[str, str]]:
+    """Normalize person payloads to Plex person format."""
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        return []
+
+    people = []
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("title") or item.get("tag")
+        elif isinstance(item, str):
+            name = item
+        else:
+            name = ""
+        if isinstance(name, str) and name:
+            people.append({"tag": name})
+    return people
+
+
+def _get_collections(scene: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract collection/series/franchise names from scene payloads."""
+    candidates = []
+    for key in ("collections", "collection", "series", "franchise", "franchises"):
+        if key in scene:
+            value = scene.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+            else:
+                candidates.append(value)
+
+    collections: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in candidates:
+        if isinstance(value, dict):
+            name = value.get("name") or value.get("title") or value.get("tag")
+        elif isinstance(value, str):
+            name = value
+        else:
+            name = ""
+        if isinstance(name, str) and name and name not in seen:
+            collections.append({"tag": name})
+            seen.add(name)
+    return collections
+
+
+def _get_studio(scene: dict[str, Any]) -> str:
+    """Extract normalized studio/site name from scene payload."""
+    site = scene.get("site") or scene.get("site_hydrated") or {}
+    if isinstance(site, dict):
+        return site.get("name") or site.get("title") or ""
+    return ""
+
+
 def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int = 1) -> dict[str, Any]:
     """
     Map a TPDB scene to a Plex match result.
@@ -32,19 +153,9 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     year = int(date.split("-")[0]) if date and "-" in date else None
     summary = scene.get("description") or ""
 
-    # Get poster image
-    poster = scene.get("poster") or scene.get("image") or ""
-    if isinstance(poster, dict):
-        poster = poster.get("url", "")
-
-    # Get background/fanart
-    background = scene.get("background") or ""
-    if isinstance(background, dict):
-        background = background.get("url", "")
-
-    # Get studio name
-    site = scene.get("site") or {}
-    studio = site.get("name", "") if isinstance(site, dict) else ""
+    poster = _get_scene_poster(scene)
+    background = _get_scene_art(scene)
+    studio = _get_studio(scene)
 
     # Get duration in milliseconds
     duration = scene.get("duration")
@@ -90,9 +201,10 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
         for performer in performers:
             if isinstance(performer, dict):
                 role = {"tag": performer.get("name", "")}
-                performer_image = performer.get("image") or performer.get("poster") or ""
-                if isinstance(performer_image, dict):
-                    performer_image = performer_image.get("url", "")
+                performer_image = _get_first_image(
+                    performer,
+                    ("image", "poster", "thumb", "photo", "avatar"),
+                )
                 if performer_image:
                     role["thumb"] = performer_image
                 roles.append(role)
@@ -112,6 +224,14 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
                 genres.append({"tag": tag_name})
         if genres:
             match_result["Genre"] = genres
+
+    directors = _normalize_people(scene.get("directors") or scene.get("director"))
+    if directors:
+        match_result["Director"] = directors
+
+    collections = _get_collections(scene)
+    if collections:
+        match_result["Collection"] = collections
 
     return match_result
 
@@ -133,19 +253,9 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
     year = int(date.split("-")[0]) if date and "-" in date else None
     summary = scene.get("description") or ""
 
-    # Get poster image
-    poster = scene.get("poster") or scene.get("image") or ""
-    if isinstance(poster, dict):
-        poster = poster.get("url", "")
-
-    # Get background/fanart
-    background = scene.get("background") or ""
-    if isinstance(background, dict):
-        background = background.get("url", "")
-
-    # Get studio name
-    site = scene.get("site") or {}
-    studio = site.get("name", "") if isinstance(site, dict) else ""
+    poster = _get_scene_poster(scene)
+    background = _get_scene_art(scene)
+    studio = _get_studio(scene)
 
     # Get duration in milliseconds
     duration = scene.get("duration")
@@ -187,9 +297,10 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
         for performer in performers:
             if isinstance(performer, dict):
                 role = {"tag": performer.get("name", "")}
-                performer_image = performer.get("image") or performer.get("poster") or ""
-                if isinstance(performer_image, dict):
-                    performer_image = performer_image.get("url", "")
+                performer_image = _get_first_image(
+                    performer,
+                    ("image", "poster", "thumb", "photo", "avatar"),
+                )
                 if performer_image:
                     role["thumb"] = performer_image
                 roles.append(role)
@@ -209,5 +320,13 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
                 genres.append({"tag": tag_name})
         if genres:
             metadata["Genre"] = genres
+
+    directors = _normalize_people(scene.get("directors") or scene.get("director"))
+    if directors:
+        metadata["Director"] = directors
+
+    collections = _get_collections(scene)
+    if collections:
+        metadata["Collection"] = collections
 
     return metadata
