@@ -2,7 +2,7 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from provider.mappers.tpdb_to_plex import map_scene_to_match, map_scene_to_metadata
+from provider.mappers.tpdb_to_plex import map_scene_to_images, map_scene_to_match, map_scene_to_metadata
 from provider.services.metadata_service import MetadataService
 
 
@@ -15,10 +15,12 @@ class MapperEnrichmentTests(unittest.TestCase):
             "image": {"url": "https://img/poster.jpg"},
             "art": "https://img/art.jpg",
             "site": {"name": "Studio"},
-            "performers": [{"name": "Performer", "thumb": "https://img/p.jpg"}],
+            "performers": [{"id": "p1", "name": "Performer", "thumb": "https://img/p.jpg"}],
             "directors": [{"name": "Director One"}, {"name": "Director Two"}],
             "series": [{"name": "Series A"}],
             "franchise": "Franchise B",
+            "imdb_id": "tt1234567",
+            "ids": {"tmdb": "98765"},
         }
 
         metadata = map_scene_to_metadata(scene)
@@ -30,7 +32,15 @@ class MapperEnrichmentTests(unittest.TestCase):
             metadata.get("Collection"),
             [{"tag": "Series A"}, {"tag": "Franchise B"}],
         )
-        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "thumb": "https://img/p.jpg"}])
+        self.assertEqual(
+            metadata.get("Role"),
+            [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
+        )
+        self.assertEqual(metadata.get("isAdult"), 1)
+        self.assertEqual(
+            metadata.get("Guid"),
+            [{"id": "imdb://tt1234567"}, {"id": "tmdb://98765"}, {"id": "tpdb://123"}],
+        )
 
     def test_match_supports_nested_images(self):
         scene = {
@@ -40,12 +50,72 @@ class MapperEnrichmentTests(unittest.TestCase):
                 "poster": {"src": "https://img/poster.jpg"},
                 "background": {"url": "https://img/bg.jpg"},
             },
+            "external_ids": {"tvdb_id": "321"},
         }
 
         match = map_scene_to_match(scene)
 
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
+        self.assertEqual(match.get("isAdult"), 1)
+        self.assertEqual(match.get("Guid"), [{"id": "tvdb://321"}, {"id": "tpdb://123"}])
+
+    def test_map_scene_to_images_returns_unique_image_urls(self):
+        scene = {
+            "slug": "scene-slug",
+            "images": {
+                "poster": {"src": "https://img/poster.jpg"},
+                "background": {"url": "https://img/bg.jpg"},
+            },
+        }
+
+        images = map_scene_to_images(scene)
+        image_types = {image["type"] for image in images}
+
+        self.assertSetEqual(image_types, {"poster", "art"})
+
+    def test_map_scene_to_images_returns_empty_when_no_images(self):
+        scene = {
+            "slug": "scene-slug",
+            "title": "Scene Without Artwork",
+        }
+
+        images = map_scene_to_images(scene)
+
+        self.assertEqual(images, [])
+
+    def test_legacy_scene_and_actor_image_fields_are_mapped(self):
+        scene = {
+            "slug": "scene-slug",
+            "title": "Scene",
+            "posters": {"large": "https://img/poster-large.jpg"},
+            "background": {"full": "https://img/background-full.jpg"},
+            "performers": [{"slug": "perf-slug", "name": "Performer", "face": "https://img/performer-face.jpg"}],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        images = map_scene_to_images(scene)
+        image_by_type = {image["type"]: image["url"] for image in images}
+
+        self.assertEqual(metadata.get("thumb"), "https://img/poster-large.jpg")
+        self.assertEqual(metadata.get("art"), "https://img/background-full.jpg")
+        self.assertEqual(
+            metadata.get("Role"),
+            [{"tag": "Performer", "id": "tpdb://performer/perf-slug", "thumb": "https://img/performer-face.jpg"}],
+        )
+        self.assertEqual(image_by_type.get("poster"), "https://img/poster-large.jpg")
+        self.assertEqual(image_by_type.get("art"), "https://img/background-full.jpg")
+
+    def test_role_identifier_prefers_performer_id_over_slug(self):
+        scene = {
+            "id": "123",
+            "title": "Scene",
+            "performers": [{"id": "performer-id", "slug": "performer-slug", "name": "Performer"}],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "id": "tpdb://performer/performer-id"}])
 
 
 class MetadataHydrationTests(unittest.TestCase):

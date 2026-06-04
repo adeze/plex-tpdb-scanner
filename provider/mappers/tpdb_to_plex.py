@@ -1,5 +1,6 @@
 """Map TPDB scene data to Plex metadata format."""
 
+import logging
 from typing import Any
 
 # Plex type mappings
@@ -11,6 +12,8 @@ TYPE_STRINGS = {
     PLEX_TYPE_OTHER: "clip",
 }
 
+logger = logging.getLogger(__name__)
+
 
 def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
     """Extract a useful string from scalar or nested payload values."""
@@ -19,7 +22,7 @@ def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        for key in ("url", "src", "path", "image", "poster", "thumb"):
+        for key in ("url", "src", "path", "image", "poster", "thumb", "face", "full", "large"):
             nested = _extract_string(value.get(key), depth=depth + 1, max_depth=max_depth)
             if nested:
                 return nested
@@ -45,7 +48,7 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
     """Choose the best poster/thumb-like image from a scene payload."""
     poster = _get_first_image(
         scene,
-        ("poster", "cover", "cover_image", "thumb", "image", "background", "art"),
+        ("poster", "posters", "cover", "cover_image", "thumb", "image", "background", "art"),
     )
     if poster:
         return poster
@@ -57,6 +60,11 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
         )
     if isinstance(images, list):
         return _extract_string(images)
+    logger.debug(
+        "No scene poster image extracted for scene=%s; available_keys=%s",
+        scene.get("slug", scene.get("id", "")),
+        sorted(scene.keys()),
+    )
     return ""
 
 
@@ -76,7 +84,59 @@ def _get_scene_art(scene: dict[str, Any]) -> str:
         )
     if isinstance(images, list):
         return _extract_string(images)
+    logger.debug(
+        "No scene art image extracted for scene=%s; available_keys=%s",
+        scene.get("slug", scene.get("id", "")),
+        sorted(scene.keys()),
+    )
     return ""
+
+
+def extract_scene_images(scene: dict[str, Any]) -> dict[str, str]:
+    """Extract normalized Plex image slots from a scene payload."""
+    images: dict[str, str] = {}
+
+    poster = _get_scene_poster(scene)
+    if poster:
+        images["poster"] = poster
+        images["thumb"] = poster
+
+    art = _get_scene_art(scene)
+    if art:
+        images["art"] = art
+        images["background"] = art
+
+    return images
+
+
+def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map TPDB scene payload to Plex image metadata entries."""
+    slug = scene.get("slug", scene.get("id", ""))
+    scene_images = extract_scene_images(scene)
+
+    image_entries = []
+    seen_urls: set[str] = set()
+    for image_type, image_url in scene_images.items():
+        if image_url in seen_urls:
+            logger.debug(
+                "Skipping duplicate image url for scene=%s type=%s url=%s",
+                slug,
+                image_type,
+                image_url,
+            )
+            continue
+        seen_urls.add(image_url)
+        image_entries.append(
+            {
+                "type": image_type,
+                "url": image_url,
+                "key": f"/library/metadata/{slug}/images/{image_type}",
+                "ratingKey": slug,
+                "provider": "tv.plex.agents.custom.tpdb",
+            }
+        )
+
+    return image_entries
 
 
 def _normalize_people(items: Any) -> list[dict[str, str]]:
@@ -131,6 +191,68 @@ def _get_studio(scene: dict[str, Any]) -> str:
     if isinstance(site, dict):
         return site.get("name") or site.get("title") or ""
     return ""
+
+
+def _extract_provider_id(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
+    """Extract first non-empty provider ID from known key names."""
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and value != "":
+            return str(value)
+    return ""
+
+
+def _get_guid_entries(scene: dict[str, Any]) -> list[dict[str, str]]:
+    """Build Plex Guid entries for TPDB and known external providers."""
+    external_sources: list[dict[str, Any]] = [scene]
+    for key in ("ids", "external_ids"):
+        candidate = scene.get(key)
+        if isinstance(candidate, dict):
+            external_sources.append(candidate)
+
+    provider_keys = {
+        "imdb": ("imdb", "imdb_id"),
+        "tmdb": ("tmdb", "tmdb_id"),
+        "tvdb": ("tvdb", "tvdb_id"),
+    }
+
+    guid_ids: list[str] = []
+    for provider, keys in provider_keys.items():
+        for source in external_sources:
+            provider_id = _extract_provider_id(source, keys)
+            if provider_id:
+                guid_ids.append(f"{provider}://{provider_id}")
+                break
+
+    tpdb_identifier = _extract_provider_id(scene, ("id", "slug"))
+    if tpdb_identifier:
+        guid_ids.append(f"tpdb://{tpdb_identifier}")
+
+    return [{"id": guid_id} for guid_id in dict.fromkeys(guid_ids)]
+
+
+def _map_roles(performers: Any) -> list[dict[str, str]]:
+    """Map TPDB performers to Plex Role entries."""
+    if not isinstance(performers, list):
+        return []
+
+    roles: list[dict[str, str]] = []
+    for performer in performers:
+        if not isinstance(performer, dict):
+            continue
+        role = {"tag": performer.get("name", "")}
+        performer_id = _extract_provider_id(performer, ("id", "slug"))
+        if performer_id:
+            role["id"] = f"tpdb://performer/{performer_id}"
+        performer_image = _get_first_image(
+            performer,
+            ("image", "poster", "thumb", "photo", "avatar", "face"),
+        )
+        if performer_image:
+            role["thumb"] = performer_image
+        roles.append(role)
+
+    return roles
 
 
 def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int = 1) -> dict[str, Any]:
@@ -194,22 +316,9 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     if duration:
         match_result["duration"] = duration
 
-    # Map performers to roles
-    performers = scene.get("performers") or []
-    if performers:
-        roles = []
-        for performer in performers:
-            if isinstance(performer, dict):
-                role = {"tag": performer.get("name", "")}
-                performer_image = _get_first_image(
-                    performer,
-                    ("image", "poster", "thumb", "photo", "avatar"),
-                )
-                if performer_image:
-                    role["thumb"] = performer_image
-                roles.append(role)
-        if roles:
-            match_result["Role"] = roles
+    roles = _map_roles(scene.get("performers") or [])
+    if roles:
+        match_result["Role"] = roles
 
     # Map tags to genres
     tags = scene.get("tags") or []
@@ -232,6 +341,12 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     collections = _get_collections(scene)
     if collections:
         match_result["Collection"] = collections
+
+    match_result["isAdult"] = 1
+
+    guid_entries = _get_guid_entries(scene)
+    if guid_entries:
+        match_result["Guid"] = guid_entries
 
     return match_result
 
@@ -290,22 +405,9 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
     if duration:
         metadata["duration"] = duration
 
-    # Map performers to roles
-    performers = scene.get("performers") or []
-    if performers:
-        roles = []
-        for performer in performers:
-            if isinstance(performer, dict):
-                role = {"tag": performer.get("name", "")}
-                performer_image = _get_first_image(
-                    performer,
-                    ("image", "poster", "thumb", "photo", "avatar"),
-                )
-                if performer_image:
-                    role["thumb"] = performer_image
-                roles.append(role)
-        if roles:
-            metadata["Role"] = roles
+    roles = _map_roles(scene.get("performers") or [])
+    if roles:
+        metadata["Role"] = roles
 
     # Map tags to genres
     tags = scene.get("tags") or []
@@ -328,5 +430,11 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
     collections = _get_collections(scene)
     if collections:
         metadata["Collection"] = collections
+
+    metadata["isAdult"] = 1
+
+    guid_entries = _get_guid_entries(scene)
+    if guid_entries:
+        metadata["Guid"] = guid_entries
 
     return metadata
