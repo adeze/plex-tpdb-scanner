@@ -61,6 +61,25 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertSetEqual(image_types, {"poster", "thumb", "art", "background"})
 
+    def test_legacy_scene_and_actor_image_fields_are_mapped(self):
+        scene = {
+            "slug": "scene-slug",
+            "title": "Scene",
+            "posters": {"large": "https://img/poster-large.jpg"},
+            "background": {"full": "https://img/background-full.jpg"},
+            "performers": [{"name": "Performer", "face": "https://img/performer-face.jpg"}],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        images = map_scene_to_images(scene)
+        image_by_type = {image["type"]: image["url"] for image in images}
+
+        self.assertEqual(metadata.get("thumb"), "https://img/poster-large.jpg")
+        self.assertEqual(metadata.get("art"), "https://img/background-full.jpg")
+        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "thumb": "https://img/performer-face.jpg"}])
+        self.assertEqual(image_by_type.get("poster"), "https://img/poster-large.jpg")
+        self.assertEqual(image_by_type.get("art"), "https://img/background-full.jpg")
+
 
 class MetadataHydrationTests(unittest.TestCase):
     def test_hydrates_performer_and_site_with_caching(self):

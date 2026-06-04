@@ -19,7 +19,7 @@ def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        for key in ("url", "src", "path", "image", "poster", "thumb"):
+        for key in ("url", "src", "path", "image", "poster", "thumb", "face", "full", "large"):
             nested = _extract_string(value.get(key), depth=depth + 1, max_depth=max_depth)
             if nested:
                 return nested
@@ -45,7 +45,7 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
     """Choose the best poster/thumb-like image from a scene payload."""
     poster = _get_first_image(
         scene,
-        ("poster", "cover", "cover_image", "thumb", "image", "background", "art"),
+        ("poster", "posters", "cover", "cover_image", "thumb", "image", "background", "art"),
     )
     if poster:
         return poster
@@ -240,7 +240,7 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
                 role = {"tag": performer.get("name", "")}
                 performer_image = _get_first_image(
                     performer,
-                    ("image", "poster", "thumb", "photo", "avatar"),
+                    ("image", "poster", "thumb", "photo", "avatar", "face"),
                 )
                 if performer_image:
                     role["thumb"] = performer_image
@@ -336,7 +336,7 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
                 role = {"tag": performer.get("name", "")}
                 performer_image = _get_first_image(
                     performer,
-                    ("image", "poster", "thumb", "photo", "avatar"),
+                    ("image", "poster", "thumb", "photo", "avatar", "face"),
                 )
                 if performer_image:
                     role["thumb"] = performer_image

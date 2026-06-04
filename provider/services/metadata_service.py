@@ -40,7 +40,7 @@ class MetadataService:
     @staticmethod
     def _has_image(payload: dict) -> bool:
         """Check if payload already includes any image-like field."""
-        return any(payload.get(key) for key in ("image", "poster", "thumb", "photo", "avatar"))
+        return any(payload.get(key) for key in ("image", "poster", "thumb", "photo", "avatar", "face"))
 
     def _get_cached_performer(self, performer_identifier: str) -> Optional[dict]:
         """Get performer details with lightweight in-memory cache."""
