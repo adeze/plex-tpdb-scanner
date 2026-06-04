@@ -169,6 +169,9 @@ def _get_collections(scene: dict[str, Any]) -> list[dict[str, str]]:
                 candidates.extend(value)
             else:
                 candidates.append(value)
+    studio = _get_studio(scene)
+    if studio:
+        candidates.append(studio)
 
     collections: list[dict[str, str]] = []
     seen: set[str] = set()
