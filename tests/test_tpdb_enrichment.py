@@ -19,7 +19,6 @@ class MapperEnrichmentTests(unittest.TestCase):
             "directors": [{"name": "Director One"}, {"name": "Director Two"}],
             "series": [{"name": "Series A"}],
             "franchise": "Franchise B",
-            "isAdult": True,
             "imdb_id": "tt1234567",
             "ids": {"tmdb": "98765"},
         }
@@ -37,7 +36,7 @@ class MapperEnrichmentTests(unittest.TestCase):
             metadata.get("Role"),
             [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
         )
-        self.assertTrue(metadata.get("isAdult"))
+        self.assertEqual(metadata.get("isAdult"), 1)
         self.assertEqual(
             metadata.get("Guid"),
             [{"id": "imdb://tt1234567"}, {"id": "tmdb://98765"}, {"id": "tpdb://123"}],
@@ -51,7 +50,6 @@ class MapperEnrichmentTests(unittest.TestCase):
                 "poster": {"src": "https://img/poster.jpg"},
                 "background": {"url": "https://img/bg.jpg"},
             },
-            "adult": "true",
             "external_ids": {"tvdb_id": "321"},
         }
 
@@ -59,7 +57,7 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
-        self.assertTrue(match.get("isAdult"))
+        self.assertEqual(match.get("isAdult"), 1)
         self.assertEqual(match.get("Guid"), [{"id": "tvdb://321"}, {"id": "tpdb://123"}])
 
     def test_map_scene_to_images_returns_unique_image_urls(self):

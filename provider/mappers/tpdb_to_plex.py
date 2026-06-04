@@ -193,31 +193,6 @@ def _get_studio(scene: dict[str, Any]) -> str:
     return ""
 
 
-def _extract_bool(value: Any) -> bool | None:
-    """Normalize boolean-ish values."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "n", "off"}:
-            return False
-    return None
-
-
-def _get_is_adult(scene: dict[str, Any]) -> bool | None:
-    """Extract an adult-content flag from known TPDB-style keys."""
-    for key in ("isAdult", "is_adult", "adult"):
-        if key in scene:
-            value = _extract_bool(scene.get(key))
-            if value is not None:
-                return value
-    return None
-
-
 def _extract_provider_id(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
     """Extract first non-empty provider ID from known key names."""
     for key in keys:
@@ -367,9 +342,7 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     if collections:
         match_result["Collection"] = collections
 
-    is_adult = _get_is_adult(scene)
-    if is_adult is not None:
-        match_result["isAdult"] = is_adult
+    match_result["isAdult"] = 1
 
     guid_entries = _get_guid_entries(scene)
     if guid_entries:
@@ -458,9 +431,7 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
     if collections:
         metadata["Collection"] = collections
 
-    is_adult = _get_is_adult(scene)
-    if is_adult is not None:
-        metadata["isAdult"] = is_adult
+    metadata["isAdult"] = 1
 
     guid_entries = _get_guid_entries(scene)
     if guid_entries:
