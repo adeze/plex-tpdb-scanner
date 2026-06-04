@@ -104,6 +104,7 @@ When Plex scans your library, it sends the filename/title to the provider. The p
 | `/` | GET | Provider manifest |
 | `/library/metadata/matches` | POST | Search for matching scenes |
 | `/library/metadata/{id}` | GET | Get full metadata for a scene |
+| `/library/metadata/{id}/images` | GET | Get image metadata entries for a scene |
 
 ## Verification
 

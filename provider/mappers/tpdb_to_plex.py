@@ -79,6 +79,43 @@ def _get_scene_art(scene: dict[str, Any]) -> str:
     return ""
 
 
+def extract_scene_images(scene: dict[str, Any]) -> dict[str, str]:
+    """Extract normalized Plex image slots from a scene payload."""
+    images: dict[str, str] = {}
+
+    poster = _get_scene_poster(scene)
+    if poster:
+        images["poster"] = poster
+        images["thumb"] = poster
+
+    art = _get_scene_art(scene)
+    if art:
+        images["art"] = art
+        images["background"] = art
+
+    return images
+
+
+def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map TPDB scene payload to Plex image metadata entries."""
+    slug = scene.get("slug", scene.get("id", ""))
+    scene_images = extract_scene_images(scene)
+
+    image_entries = []
+    for image_type, image_url in scene_images.items():
+        image_entries.append(
+            {
+                "type": image_type,
+                "url": image_url,
+                "key": f"/library/metadata/{slug}/images/{image_type}",
+                "ratingKey": slug,
+                "provider": "tv.plex.agents.custom.tpdb",
+            }
+        )
+
+    return image_entries
+
+
 def _normalize_people(items: Any) -> list[dict[str, str]]:
     """Normalize person payloads to Plex person format."""
     if isinstance(items, dict):

@@ -2,7 +2,7 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from provider.mappers.tpdb_to_plex import map_scene_to_match, map_scene_to_metadata
+from provider.mappers.tpdb_to_plex import map_scene_to_images, map_scene_to_match, map_scene_to_metadata
 from provider.services.metadata_service import MetadataService
 
 
@@ -46,6 +46,20 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
+
+    def test_map_scene_to_images_includes_plex_image_slots(self):
+        scene = {
+            "slug": "scene-slug",
+            "images": {
+                "poster": {"src": "https://img/poster.jpg"},
+                "background": {"url": "https://img/bg.jpg"},
+            },
+        }
+
+        images = map_scene_to_images(scene)
+        image_types = {image["type"] for image in images}
+
+        self.assertSetEqual(image_types, {"poster", "thumb", "art", "background"})
 
 
 class MetadataHydrationTests(unittest.TestCase):

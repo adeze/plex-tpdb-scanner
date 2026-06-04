@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from metadata_tool.api import TPDBClient
 
 from provider.config import get_settings
-from provider.mappers.tpdb_to_plex import map_scene_to_metadata
+from provider.mappers.tpdb_to_plex import map_scene_to_images, map_scene_to_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +117,9 @@ class MetadataService:
         """
         logger.info("Fetching metadata for: %s", rating_key)
 
-        scene = self.client.get_scene(rating_key)
-
+        scene = self.get_scene(rating_key)
         if not scene:
-            logger.warning("Scene not found: %s", rating_key)
             return None
-
-        scene = self._hydrate_scene(scene)
 
         logger.info("Found scene: %s", scene.get("title"))
 
@@ -132,6 +128,28 @@ class MetadataService:
         except Exception as e:
             logger.error("Failed to map scene %s: %s", rating_key, e)
             return None
+
+    def get_scene(self, rating_key: str) -> Optional[dict]:
+        """Get and hydrate TPDB scene by rating key."""
+        scene = self.client.get_scene(rating_key)
+        if not scene:
+            logger.warning("Scene not found: %s", rating_key)
+            return None
+        return self._hydrate_scene(scene)
+
+    def get_images(self, rating_key: str) -> Optional[list[dict]]:
+        """Get Plex-compatible image metadata entries for a scene."""
+        logger.info("Fetching images for: %s", rating_key)
+
+        scene = self.get_scene(rating_key)
+        if not scene:
+            return None
+
+        try:
+            return map_scene_to_images(scene)
+        except Exception as e:
+            logger.error("Failed to map images for scene %s: %s", rating_key, e)
+            return []
 
 
 # Global service instance
