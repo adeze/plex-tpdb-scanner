@@ -345,7 +345,7 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     if collections:
         match_result["Collection"] = collections
 
-    match_result["isAdult"] = 1
+    match_result["isAdult"] = True
 
     guid_entries = _get_guid_entries(scene)
     if guid_entries:
@@ -434,7 +434,7 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
     if collections:
         metadata["Collection"] = collections
 
-    metadata["isAdult"] = 1
+    metadata["isAdult"] = True
 
     guid_entries = _get_guid_entries(scene)
     if guid_entries:
