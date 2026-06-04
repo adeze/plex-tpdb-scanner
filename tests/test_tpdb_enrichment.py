@@ -30,7 +30,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         self.assertEqual(metadata.get("Director"), [{"tag": "Director One"}, {"tag": "Director Two"}])
         self.assertEqual(
             metadata.get("Collection"),
-            [{"tag": "Series A"}, {"tag": "Franchise B"}],
+            [{"tag": "Series A"}, {"tag": "Franchise B"}, {"tag": "Studio"}],
         )
         self.assertEqual(
             metadata.get("Role"),
@@ -59,6 +59,33 @@ class MapperEnrichmentTests(unittest.TestCase):
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
         self.assertEqual(match.get("isAdult"), 1)
         self.assertEqual(match.get("Guid"), [{"id": "tvdb://321"}, {"id": "tpdb://123"}])
+
+    def test_studio_added_to_match_collection_without_duplicates(self):
+        scene = {
+            "id": "123",
+            "title": "Scene",
+            "site": {"name": "Studio"},
+            "series": [{"name": "Studio"}, {"name": "Series A"}],
+        }
+
+        match = map_scene_to_match(scene)
+
+        self.assertEqual(match.get("studio"), "Studio")
+        self.assertEqual(match.get("Collection"), [{"tag": "Studio"}, {"tag": "Series A"}])
+
+    def test_match_maps_performer_image_to_role_thumb(self):
+        scene = {
+            "id": "123",
+            "title": "Scene",
+            "performers": [{"id": "p1", "name": "Performer", "image": {"url": "https://img/p.jpg"}}],
+        }
+
+        match = map_scene_to_match(scene)
+
+        self.assertEqual(
+            match.get("Role"),
+            [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
+        )
 
     def test_map_scene_to_images_returns_unique_image_urls(self):
         scene = {
