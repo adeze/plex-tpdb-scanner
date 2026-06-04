@@ -74,6 +74,16 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertSetEqual(image_types, {"poster", "art"})
 
+    def test_map_scene_to_images_returns_empty_when_no_images(self):
+        scene = {
+            "slug": "scene-slug",
+            "title": "Scene Without Artwork",
+        }
+
+        images = map_scene_to_images(scene)
+
+        self.assertEqual(images, [])
+
     def test_legacy_scene_and_actor_image_fields_are_mapped(self):
         scene = {
             "slug": "scene-slug",
@@ -95,6 +105,17 @@ class MapperEnrichmentTests(unittest.TestCase):
         )
         self.assertEqual(image_by_type.get("poster"), "https://img/poster-large.jpg")
         self.assertEqual(image_by_type.get("art"), "https://img/background-full.jpg")
+
+    def test_role_identifier_prefers_performer_id_over_slug(self):
+        scene = {
+            "id": "123",
+            "title": "Scene",
+            "performers": [{"id": "performer-id", "slug": "performer-slug", "name": "Performer"}],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "id": "tpdb://performer/performer-id"}])
 
 
 class MetadataHydrationTests(unittest.TestCase):

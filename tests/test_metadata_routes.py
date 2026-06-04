@@ -40,6 +40,20 @@ class MetadataRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 404)
         service.get_images.assert_called_once_with("missing-scene")
 
+    async def test_get_metadata_images_returns_empty_list_for_scene_without_images(self):
+        service = Mock()
+        service.get_images.return_value = []
+
+        with patch("provider.routes.metadata.get_metadata_service", return_value=service):
+            response = await metadata_routes.get_metadata_images("scene-slug")
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["MediaContainer"]["size"], 0)
+        self.assertEqual(payload["MediaContainer"]["totalSize"], 0)
+        self.assertEqual(payload["MediaContainer"]["Metadata"], [])
+        service.get_images.assert_called_once_with("scene-slug")
+
     async def test_get_metadata_response_unchanged(self):
         service = Mock()
         service.get_metadata.return_value = {
