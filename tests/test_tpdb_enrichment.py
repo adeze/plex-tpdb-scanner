@@ -47,7 +47,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
         self.assertEqual(match.get("art"), "https://img/bg.jpg")
 
-    def test_map_scene_to_images_includes_plex_image_slots(self):
+    def test_map_scene_to_images_returns_unique_image_urls(self):
         scene = {
             "slug": "scene-slug",
             "images": {
@@ -59,7 +59,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         images = map_scene_to_images(scene)
         image_types = {image["type"] for image in images}
 
-        self.assertSetEqual(image_types, {"poster", "thumb", "art", "background"})
+        self.assertSetEqual(image_types, {"poster", "art"})
 
     def test_legacy_scene_and_actor_image_fields_are_mapped(self):
         scene = {

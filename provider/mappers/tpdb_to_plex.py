@@ -1,5 +1,6 @@
 """Map TPDB scene data to Plex metadata format."""
 
+import logging
 from typing import Any
 
 # Plex type mappings
@@ -10,6 +11,8 @@ TYPE_STRINGS = {
     PLEX_TYPE_MOVIE: "movie",
     PLEX_TYPE_OTHER: "clip",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
@@ -57,6 +60,11 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
         )
     if isinstance(images, list):
         return _extract_string(images)
+    logger.debug(
+        "No scene poster image extracted for scene=%s; available_keys=%s",
+        scene.get("slug", scene.get("id", "")),
+        sorted(scene.keys()),
+    )
     return ""
 
 
@@ -76,6 +84,11 @@ def _get_scene_art(scene: dict[str, Any]) -> str:
         )
     if isinstance(images, list):
         return _extract_string(images)
+    logger.debug(
+        "No scene art image extracted for scene=%s; available_keys=%s",
+        scene.get("slug", scene.get("id", "")),
+        sorted(scene.keys()),
+    )
     return ""
 
 
@@ -102,7 +115,17 @@ def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
     scene_images = extract_scene_images(scene)
 
     image_entries = []
+    seen_urls: set[str] = set()
     for image_type, image_url in scene_images.items():
+        if image_url in seen_urls:
+            logger.debug(
+                "Skipping duplicate image url for scene=%s type=%s url=%s",
+                slug,
+                image_type,
+                image_url,
+            )
+            continue
+        seen_urls.add(image_url)
         image_entries.append(
             {
                 "type": image_type,
