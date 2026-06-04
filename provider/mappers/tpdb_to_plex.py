@@ -12,18 +12,20 @@ TYPE_STRINGS = {
 }
 
 
-def _extract_string(value: Any) -> str:
+def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
     """Extract a useful string from scalar or nested payload values."""
+    if depth > max_depth:
+        return ""
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
         for key in ("url", "src", "path", "image", "poster", "thumb"):
-            nested = _extract_string(value.get(key))
+            nested = _extract_string(value.get(key), depth=depth + 1, max_depth=max_depth)
             if nested:
                 return nested
     if isinstance(value, list):
         for item in value:
-            nested = _extract_string(item)
+            nested = _extract_string(item, depth=depth + 1, max_depth=max_depth)
             if nested:
                 return nested
     return ""
@@ -88,9 +90,11 @@ def _normalize_people(items: Any) -> list[dict[str, str]]:
     for item in items:
         if isinstance(item, dict):
             name = item.get("name") or item.get("title") or item.get("tag")
+        elif isinstance(item, str):
+            name = item
         else:
-            name = str(item)
-        if name:
+            name = ""
+        if isinstance(name, str) and name:
             people.append({"tag": name})
     return people
 
@@ -111,9 +115,11 @@ def _get_collections(scene: dict[str, Any]) -> list[dict[str, str]]:
     for value in candidates:
         if isinstance(value, dict):
             name = value.get("name") or value.get("title") or value.get("tag")
+        elif isinstance(value, str):
+            name = value
         else:
-            name = str(value) if value is not None else ""
-        if name and name not in seen:
+            name = ""
+        if isinstance(name, str) and name and name not in seen:
             collections.append({"tag": name})
             seen.add(name)
     return collections

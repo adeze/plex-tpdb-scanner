@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -19,11 +20,13 @@ logger = logging.getLogger(__name__)
 class MetadataService:
     """Service for fetching full metadata from TPDB."""
 
+    _CACHE_LIMIT = 512
+
     def __init__(self):
         settings = get_settings()
         self.client = TPDBClient(settings.tpdb_api_key)
-        self._performer_cache: dict[str, dict | None] = {}
-        self._site_cache: dict[str, dict | None] = {}
+        self._performer_cache: OrderedDict[str, dict | None] = OrderedDict()
+        self._site_cache: OrderedDict[str, dict | None] = OrderedDict()
 
     @staticmethod
     def _first_identifier(payload: dict, keys: tuple[str, ...]) -> str:
@@ -43,7 +46,11 @@ class MetadataService:
         """Get performer details with lightweight in-memory cache."""
         if not performer_identifier:
             return None
-        if performer_identifier not in self._performer_cache:
+        if performer_identifier in self._performer_cache:
+            self._performer_cache.move_to_end(performer_identifier)
+        else:
+            if len(self._performer_cache) >= self._CACHE_LIMIT:
+                self._performer_cache.popitem(last=False)
             self._performer_cache[performer_identifier] = self.client.get_performer(performer_identifier)
         return self._performer_cache[performer_identifier]
 
@@ -51,12 +58,19 @@ class MetadataService:
         """Get site details with lightweight in-memory cache."""
         if not site_identifier:
             return None
-        if site_identifier not in self._site_cache:
+        if site_identifier in self._site_cache:
+            self._site_cache.move_to_end(site_identifier)
+        else:
+            if len(self._site_cache) >= self._CACHE_LIMIT:
+                self._site_cache.popitem(last=False)
             self._site_cache[site_identifier] = self.client.get_site(site_identifier)
         return self._site_cache[site_identifier]
 
     def _hydrate_scene(self, scene: dict) -> dict:
-        """Hydrate sparse scene payload with performer and site details."""
+        """Hydrate sparse scene payload with performer and site details.
+
+        Inline scene fields take precedence over hydrated fields when both exist.
+        """
         performers = scene.get("performers")
         if isinstance(performers, list):
             hydrated_performers = []

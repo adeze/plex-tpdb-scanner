@@ -1,4 +1,5 @@
 import unittest
+from collections import OrderedDict
 from unittest.mock import Mock
 
 from provider.mappers.tpdb_to_plex import map_scene_to_match, map_scene_to_metadata
@@ -15,7 +16,7 @@ class MapperEnrichmentTests(unittest.TestCase):
             "art": "https://img/art.jpg",
             "site": {"name": "Studio"},
             "performers": [{"name": "Performer", "thumb": "https://img/p.jpg"}],
-            "directors": [{"name": "Director One"}, "Director Two"],
+            "directors": [{"name": "Director One"}, {"name": "Director Two"}],
             "series": [{"name": "Series A"}],
             "franchise": "Franchise B",
         }
@@ -50,8 +51,8 @@ class MapperEnrichmentTests(unittest.TestCase):
 class MetadataHydrationTests(unittest.TestCase):
     def test_hydrates_performer_and_site_with_caching(self):
         service = MetadataService.__new__(MetadataService)
-        service._performer_cache = {}
-        service._site_cache = {}
+        service._performer_cache = OrderedDict()
+        service._site_cache = OrderedDict()
         service.client = Mock()
         service.client.get_performer.return_value = {
             "id": "p1",
@@ -75,6 +76,27 @@ class MetadataHydrationTests(unittest.TestCase):
         self.assertEqual(hydrated_again["site"]["name"], "Hydrated Studio")
         service.client.get_performer.assert_called_once_with("p1")
         service.client.get_site.assert_called_once_with("s1")
+
+    def test_hydrated_performer_name_used_when_inline_missing(self):
+        service = MetadataService.__new__(MetadataService)
+        service._performer_cache = OrderedDict()
+        service._site_cache = OrderedDict()
+        service.client = Mock()
+        service.client.get_performer.return_value = {
+            "id": "p2",
+            "name": "Hydrated Name",
+            "image": "https://img/hydrated-2.jpg",
+        }
+        service.client.get_site.return_value = None
+
+        scene = {
+            "id": "scene-2",
+            "performers": [{"id": "p2"}],
+        }
+
+        hydrated = service._hydrate_scene(scene)
+
+        self.assertEqual(hydrated["performers"][0]["name"], "Hydrated Name")
 
 
 if __name__ == "__main__":
