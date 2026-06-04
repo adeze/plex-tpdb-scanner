@@ -22,6 +22,74 @@ class MetadataService:
     def __init__(self):
         settings = get_settings()
         self.client = TPDBClient(settings.tpdb_api_key)
+        self._performer_cache: dict[str, dict | None] = {}
+        self._site_cache: dict[str, dict | None] = {}
+
+    @staticmethod
+    def _first_identifier(payload: dict, keys: tuple[str, ...]) -> str:
+        """Get the first non-empty identifier from payload keys."""
+        for key in keys:
+            value = payload.get(key)
+            if value is not None and value != "":
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _has_image(payload: dict) -> bool:
+        """Check if payload already includes any image-like field."""
+        return any(payload.get(key) for key in ("image", "poster", "thumb", "photo", "avatar"))
+
+    def _get_cached_performer(self, performer_identifier: str) -> Optional[dict]:
+        """Get performer details with lightweight in-memory cache."""
+        if not performer_identifier:
+            return None
+        if performer_identifier not in self._performer_cache:
+            self._performer_cache[performer_identifier] = self.client.get_performer(performer_identifier)
+        return self._performer_cache[performer_identifier]
+
+    def _get_cached_site(self, site_identifier: str) -> Optional[dict]:
+        """Get site details with lightweight in-memory cache."""
+        if not site_identifier:
+            return None
+        if site_identifier not in self._site_cache:
+            self._site_cache[site_identifier] = self.client.get_site(site_identifier)
+        return self._site_cache[site_identifier]
+
+    def _hydrate_scene(self, scene: dict) -> dict:
+        """Hydrate sparse scene payload with performer and site details."""
+        performers = scene.get("performers")
+        if isinstance(performers, list):
+            hydrated_performers = []
+            for performer in performers:
+                if not isinstance(performer, dict):
+                    hydrated_performers.append(performer)
+                    continue
+                hydrated_performer = performer
+                if not self._has_image(performer):
+                    performer_identifier = self._first_identifier(performer, ("id", "slug"))
+                    details = self._get_cached_performer(performer_identifier)
+                    if isinstance(details, dict):
+                        hydrated_performer = dict(details)
+                        hydrated_performer.update(performer)
+                hydrated_performers.append(hydrated_performer)
+            scene["performers"] = hydrated_performers
+
+        site = scene.get("site")
+        site_identifier = ""
+        if isinstance(site, dict):
+            site_identifier = self._first_identifier(site, ("id", "slug"))
+        if not site_identifier:
+            site_identifier = self._first_identifier(scene, ("site_id", "site_slug"))
+
+        hydrated_site = self._get_cached_site(site_identifier)
+        if isinstance(hydrated_site, dict):
+            merged_site = dict(hydrated_site)
+            if isinstance(site, dict):
+                merged_site.update(site)
+            scene["site_hydrated"] = hydrated_site
+            scene["site"] = merged_site
+
+        return scene
 
     def get_metadata(self, rating_key: str) -> Optional[dict]:
         """
@@ -40,6 +108,8 @@ class MetadataService:
         if not scene:
             logger.warning("Scene not found: %s", rating_key)
             return None
+
+        scene = self._hydrate_scene(scene)
 
         logger.info("Found scene: %s", scene.get("title"))
 
