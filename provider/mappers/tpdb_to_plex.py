@@ -34,6 +34,73 @@ def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
     return ""
 
 
+# Scores for poster slot: higher = better suited as a poster/thumb image.
+# Screengrab/still/frame/gallery content is deprioritized with score 10.
+_POSTER_KIND_SCORES: dict[str, int] = {
+    "poster": 100,
+    "cover": 90,
+    "thumb": 70,
+    "background": 30,
+    "art": 30,
+    "fanart": 30,
+    "backdrop": 30,
+    "screengrab": 10,
+    "screenshot": 10,
+    "still": 10,
+    "frame": 10,
+    "gallery": 10,
+}
+
+# Scores for art/background slot: higher = better suited as a background image.
+_ART_KIND_SCORES: dict[str, int] = {
+    "background": 100,
+    "art": 100,
+    "fanart": 100,
+    "backdrop": 100,
+    "poster": 30,
+    "cover": 30,
+    "thumb": 30,
+    "screengrab": 10,
+    "screenshot": 10,
+    "still": 10,
+    "frame": 10,
+    "gallery": 10,
+}
+
+# Default score for unrecognized kinds (e.g. "image" or completely generic fields).
+_GENERIC_SCORE = 50
+
+# Candidates at or below this score are screengrab/still-like and are excluded
+# from the extra image entries emitted by map_scene_to_images().
+_SCREENGRAB_SCORE_THRESHOLD = 10
+
+
+def _image_kind_from_key(key: str) -> str:
+    """Map a field name or label string to a normalized image kind for scoring."""
+    k = key.lower()
+    if k in ("poster", "posters"):
+        return "poster"
+    if k in ("cover", "cover_image"):
+        return "cover"
+    if k in ("thumb", "thumbnail"):
+        return "thumb"
+    if k in ("background", "bg"):
+        return "background"
+    if k == "art":
+        return "art"
+    if k == "fanart":
+        return "fanart"
+    if k in ("backdrop", "backdrops"):
+        return "backdrop"
+    if k in ("screengrab", "screenshot", "screengrabs", "screenshots"):
+        return "screengrab"
+    if k in ("still", "stills", "frame", "frames"):
+        return "still"
+    if k in ("gallery", "galleries"):
+        return "gallery"
+    return "generic"
+
+
 def _get_first_image(payload: dict[str, Any], fields: tuple[str, ...]) -> str:
     """Return the first non-empty image-like value from known fields."""
     for field in fields:
@@ -44,79 +111,171 @@ def _get_first_image(payload: dict[str, Any], fields: tuple[str, ...]) -> str:
     return ""
 
 
-def _get_scene_poster(scene: dict[str, Any]) -> str:
-    """Choose the best poster/thumb-like image from a scene payload."""
-    poster = _get_first_image(
-        scene,
-        ("poster", "posters", "cover", "cover_image", "thumb", "image", "background", "art"),
-    )
-    if poster:
-        return poster
+# Top-level scene fields inspected for image candidates. _image_kind_from_key()
+# is applied to each field name to derive the image kind (poster, background, etc.).
+_SCENE_IMAGE_FIELDS: tuple[str, ...] = (
+    "poster",
+    "posters",
+    "cover",
+    "cover_image",
+    "thumb",
+    "background",
+    "art",
+    "fanart",
+    "backdrop",
+    "image",
+)
+
+
+def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str]]:
+    """Collect all image URL candidates from a scene payload with poster and art scores.
+
+    Inspects top-level image fields and ``scene["images"]`` (dict or list).
+    When ``images`` items carry type/category/name/label hints, those are used
+    to classify the image so that screengrabs are deprioritised.
+
+    Returns:
+        List of ``(poster_score, art_score, url)`` tuples in insertion order.
+        Duplicate URLs are silently dropped.
+    """
+    seen_urls: set[str] = set()
+    candidates: list[tuple[int, int, str]] = []
+
+    def _add(url: str, kind: str) -> None:
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            p = _POSTER_KIND_SCORES.get(kind, _GENERIC_SCORE)
+            a = _ART_KIND_SCORES.get(kind, _GENERIC_SCORE)
+            candidates.append((p, a, url))
+
+    # Top-level named image fields
+    for field in _SCENE_IMAGE_FIELDS:
+        if field in scene:
+            url = _extract_string(scene[field])
+            _add(url, _image_kind_from_key(field))
+
+    # scene["images"] — dict or list
     images = scene.get("images")
     if isinstance(images, dict):
-        return _get_first_image(
-            images,
-            ("poster", "cover", "cover_image", "thumb", "image", "background", "art"),
+        for key, value in images.items():
+            url = _extract_string(value)
+            _add(url, _image_kind_from_key(key))
+    elif isinstance(images, list):
+        for item in images:
+            if isinstance(item, str):
+                _add(item, "generic")
+            elif isinstance(item, dict):
+                # Determine kind from type/category/name/label hints when present.
+                kind = "generic"
+                for hint_key in ("type", "category", "name", "label", "kind"):
+                    hint = item.get(hint_key)
+                    if isinstance(hint, str):
+                        k = _image_kind_from_key(hint)
+                        if k != "generic":
+                            kind = k
+                            break
+                url = _extract_string(item)
+                _add(url, kind)
+
+    return candidates
+
+
+def _get_scene_poster(scene: dict[str, Any]) -> str:
+    """Choose the best poster/thumb-like image from a scene payload.
+
+    Scores all candidates and returns the URL with the highest poster score,
+    so that promotional poster/cover assets are preferred over screengrabs.
+    Falls back to any candidate when only generic or screengrab images exist.
+    """
+    candidates = _collect_image_candidates(scene)
+    if not candidates:
+        logger.debug(
+            "No scene poster image extracted for scene=%s; available_keys=%s",
+            scene.get("slug", scene.get("id", "")),
+            sorted(scene.keys()),
         )
-    if isinstance(images, list):
-        return _extract_string(images)
-    logger.debug(
-        "No scene poster image extracted for scene=%s; available_keys=%s",
-        scene.get("slug", scene.get("id", "")),
-        sorted(scene.keys()),
-    )
-    return ""
+        return ""
+    return max(candidates, key=lambda c: c[0])[2]
 
 
 def _get_scene_art(scene: dict[str, Any]) -> str:
-    """Choose the best background/art-like image from a scene payload."""
-    background = _get_first_image(
-        scene,
-        ("background", "art", "fanart", "backdrop", "image", "poster", "thumb"),
-    )
-    if background:
-        return background
-    images = scene.get("images")
-    if isinstance(images, dict):
-        return _get_first_image(
-            images,
-            ("background", "art", "fanart", "backdrop", "image", "poster", "thumb"),
+    """Choose the best background/art-like image from a scene payload.
+
+    Scores all candidates and returns the URL with the highest art score,
+    so that background/fanart assets are preferred over screengrabs.
+    Falls back to any candidate when only generic or screengrab images exist.
+    """
+    candidates = _collect_image_candidates(scene)
+    if not candidates:
+        logger.debug(
+            "No scene art image extracted for scene=%s; available_keys=%s",
+            scene.get("slug", scene.get("id", "")),
+            sorted(scene.keys()),
         )
-    if isinstance(images, list):
-        return _extract_string(images)
-    logger.debug(
-        "No scene art image extracted for scene=%s; available_keys=%s",
-        scene.get("slug", scene.get("id", "")),
-        sorted(scene.keys()),
-    )
-    return ""
+        return ""
+    return max(candidates, key=lambda c: c[1])[2]
 
 
-def extract_scene_images(scene: dict[str, Any]) -> dict[str, str]:
-    """Extract normalized Plex image slots from a scene payload."""
-    images: dict[str, str] = {}
+def extract_scene_images(scene: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract Plex image slot entries from a scene payload.
 
-    poster = _get_scene_poster(scene)
-    if poster:
-        images["poster"] = poster
-        images["thumb"] = poster
+    Returns a list of ``{"type": ..., "url": ...}`` dicts.  The primary poster
+    (``type="poster"``) and primary art (``type="art"``) entries come first.
+    Additional poster and art candidates with meaningful scores are appended so
+    that Plex can present them as alternative selections in the image picker.
+    Duplicate URLs are excluded.
+    """
+    candidates = _collect_image_candidates(scene)
+    if not candidates:
+        return []
 
-    art = _get_scene_art(scene)
-    if art:
-        images["art"] = art
-        images["background"] = art
+    by_poster = sorted(candidates, key=lambda c: c[0], reverse=True)
+    by_art = sorted(candidates, key=lambda c: c[1], reverse=True)
 
-    return images
+    entries: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    # Best poster candidate
+    best_poster_url = by_poster[0][2]
+    entries.append({"type": "poster", "url": best_poster_url})
+    seen_urls.add(best_poster_url)
+
+    # Best art candidate (must be a different URL from the primary poster)
+    for _, _, url in by_art:
+        if url not in seen_urls:
+            entries.append({"type": "art", "url": url})
+            seen_urls.add(url)
+            break
+
+    # Additional poster candidates: distinct URLs with a meaningful poster score
+    for poster_score, _, url in by_poster[1:]:
+        if url not in seen_urls and poster_score > _SCREENGRAB_SCORE_THRESHOLD:
+            entries.append({"type": "poster", "url": url})
+            seen_urls.add(url)
+
+    # Additional art candidates: distinct URLs with a meaningful art score
+    for _, art_score, url in by_art:
+        if url not in seen_urls and art_score > _SCREENGRAB_SCORE_THRESHOLD:
+            entries.append({"type": "art", "url": url})
+            seen_urls.add(url)
+
+    return entries
 
 
 def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
-    """Map TPDB scene payload to Plex image metadata entries."""
+    """Map TPDB scene payload to Plex image metadata entries.
+
+    Returns one entry per unique candidate URL.  The primary poster and art are
+    first; additional candidates follow so Plex can offer them as alternatives.
+    """
     slug = scene.get("slug", scene.get("id", ""))
     scene_images = extract_scene_images(scene)
 
     image_entries = []
     seen_urls: set[str] = set()
-    for image_type, image_url in scene_images.items():
+    for entry in scene_images:
+        image_type = entry["type"]
+        image_url = entry["url"]
         if image_url in seen_urls:
             logger.debug(
                 "Skipping duplicate image url for scene=%s type=%s url=%s",

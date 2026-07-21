@@ -2,7 +2,12 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from provider.mappers.tpdb_to_plex import map_scene_to_images, map_scene_to_match, map_scene_to_metadata
+from provider.mappers.tpdb_to_plex import (
+    extract_scene_images,
+    map_scene_to_images,
+    map_scene_to_match,
+    map_scene_to_metadata,
+)
 from provider.services.metadata_service import MetadataService
 
 
@@ -143,6 +148,177 @@ class MapperEnrichmentTests(unittest.TestCase):
         metadata = map_scene_to_metadata(scene)
 
         self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "id": "tpdb://performer/performer-id"}])
+
+    # ------------------------------------------------------------------ #
+    # Image selection: poster/background preference and VR screengrab fix  #
+    # ------------------------------------------------------------------ #
+
+    def test_poster_preferred_over_screengrab_in_images_list(self):
+        """Poster-typed images should win even when a screengrab appears first."""
+        scene = {
+            "slug": "vr-scene",
+            "images": [
+                {"url": "https://img/screengrab.jpg", "type": "screengrab"},
+                {"url": "https://img/poster.jpg", "type": "poster"},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        match = map_scene_to_match(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://img/poster.jpg")
+        self.assertEqual(match.get("thumb"), "https://img/poster.jpg")
+
+    def test_art_preferred_over_screengrab_in_images_list(self):
+        """Background-typed images should win for the art slot."""
+        scene = {
+            "slug": "vr-scene",
+            "images": [
+                {"url": "https://img/screengrab.jpg", "type": "still"},
+                {"url": "https://img/background.jpg", "type": "background"},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("art"), "https://img/background.jpg")
+
+    def test_vr_scene_first_image_screengrab_last_is_poster(self):
+        """Simulates a typical VR payload where the first list item is a screengrab."""
+        scene = {
+            "slug": "vr-scene-123",
+            "title": "VR Scene",
+            "images": [
+                {"url": "https://cdn/vr-frame-001.jpg", "type": "screengrab"},
+                {"url": "https://cdn/vr-frame-002.jpg", "type": "still"},
+                {"url": "https://cdn/vr-poster.jpg", "type": "poster"},
+                {"url": "https://cdn/vr-bg.jpg", "type": "fanart"},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        match = map_scene_to_match(scene)
+        images = map_scene_to_images(scene)
+        image_by_type = {}
+        for img in images:
+            image_by_type.setdefault(img["type"], img["url"])
+
+        # Best poster is the explicit poster, not the first screengrab
+        self.assertEqual(metadata.get("thumb"), "https://cdn/vr-poster.jpg")
+        self.assertEqual(match.get("thumb"), "https://cdn/vr-poster.jpg")
+        # Best art is the fanart
+        self.assertEqual(metadata.get("art"), "https://cdn/vr-bg.jpg")
+        # map_scene_to_images primary slots
+        self.assertEqual(image_by_type.get("poster"), "https://cdn/vr-poster.jpg")
+        self.assertEqual(image_by_type.get("art"), "https://cdn/vr-bg.jpg")
+
+    def test_images_list_string_fallback_when_no_type_hints(self):
+        """Plain string image lists without type hints are handled as generic candidates."""
+        scene = {
+            "slug": "scene-plain",
+            "images": [
+                "https://img/image1.jpg",
+                "https://img/image2.jpg",
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        # Either image is acceptable as a generic candidate; the first should win
+        self.assertEqual(metadata.get("thumb"), "https://img/image1.jpg")
+
+    def test_top_level_poster_beats_images_list_screengrab(self):
+        """A top-level poster field should win over a screengrab in scene.images."""
+        scene = {
+            "slug": "scene-x",
+            "poster": "https://img/top-poster.jpg",
+            "images": [
+                {"url": "https://img/screengrab.jpg", "type": "screengrab"},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://img/top-poster.jpg")
+
+    def test_map_scene_to_images_emits_multiple_poster_candidates(self):
+        """When multiple poster-like images exist, map_scene_to_images emits them all."""
+        scene = {
+            "slug": "scene-multi",
+            "images": [
+                {"url": "https://img/poster1.jpg", "type": "poster"},
+                {"url": "https://img/cover.jpg", "type": "cover"},
+                {"url": "https://img/bg.jpg", "type": "background"},
+            ],
+        }
+
+        images = map_scene_to_images(scene)
+        poster_urls = [img["url"] for img in images if img["type"] == "poster"]
+        art_urls = [img["url"] for img in images if img["type"] == "art"]
+
+        # Both poster-like candidates should be present
+        self.assertIn("https://img/poster1.jpg", poster_urls)
+        self.assertIn("https://img/cover.jpg", poster_urls)
+        # Best art candidate
+        self.assertIn("https://img/bg.jpg", art_urls)
+
+    def test_map_scene_to_images_deduplicates_urls(self):
+        """Duplicate URLs must appear only once regardless of type."""
+        scene = {
+            "slug": "scene-dup",
+            "poster": "https://img/same.jpg",
+            "background": "https://img/same.jpg",
+        }
+
+        images = map_scene_to_images(scene)
+        urls = [img["url"] for img in images]
+
+        self.assertEqual(urls.count("https://img/same.jpg"), 1)
+
+    def test_screengrab_only_payload_still_returns_image(self):
+        """When only screengrab images are present they are used as a last resort."""
+        scene = {
+            "slug": "scene-grab",
+            "images": [
+                {"url": "https://img/grab.jpg", "type": "screengrab"},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://img/grab.jpg")
+
+    def test_legacy_string_image_field_still_works(self):
+        """Plain string values in top-level image fields remain supported."""
+        scene = {
+            "slug": "scene-legacy",
+            "poster": "https://img/poster.jpg",
+            "background": "https://img/bg.jpg",
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://img/poster.jpg")
+        self.assertEqual(metadata.get("art"), "https://img/bg.jpg")
+
+    def test_extract_scene_images_returns_list(self):
+        """extract_scene_images() returns a list of {type, url} dicts."""
+        scene = {
+            "slug": "scene-fmt",
+            "images": {
+                "poster": {"src": "https://img/poster.jpg"},
+                "background": {"url": "https://img/bg.jpg"},
+            },
+        }
+
+        entries = extract_scene_images(scene)
+
+        self.assertIsInstance(entries, list)
+        types = {e["type"] for e in entries}
+        self.assertIn("poster", types)
+        self.assertIn("art", types)
+        for entry in entries:
+            self.assertIn("type", entry)
+            self.assertIn("url", entry)
 
 
 class MetadataHydrationTests(unittest.TestCase):
