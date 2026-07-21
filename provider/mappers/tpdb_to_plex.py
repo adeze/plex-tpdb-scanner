@@ -1,10 +1,8 @@
 """Map TPDB scene data to Plex metadata format."""
 
 import logging
-import os
 from typing import Any
 from urllib.parse import unquote
-from urllib.parse import quote
 
 # Plex type mappings
 PLEX_TYPE_MOVIE = 1
@@ -16,21 +14,6 @@ TYPE_STRINGS = {
 }
 
 logger = logging.getLogger(__name__)
-
-
-def _plex_image_url(scene: dict[str, Any], image_url: str, image_type: str) -> str:
-    """Build an on-demand provider image URL when configured."""
-    public_url = os.getenv("TPDB_PUBLIC_URL", "").strip().rstrip("/")
-    if not public_url or not image_url:
-        return image_url
-
-    slug = scene.get("slug", scene.get("id", ""))
-    typed_entries = [entry for entry in extract_scene_images(scene) if entry["type"] == image_type]
-    for index, entry in enumerate(typed_entries):
-        if entry["type"] == image_type and entry["url"] == image_url:
-            return f"{public_url}/library/metadata/{quote(str(slug), safe='')}/image/{image_type}/{index}"
-
-    return image_url
 
 
 def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
@@ -344,7 +327,7 @@ def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
         image_entries.append(
             {
                 "type": plex_image_type,
-                "url": _plex_image_url(scene, image_url, image_type),
+                "url": image_url,
                 "key": f"/library/metadata/{slug}/images/{plex_image_type}/{type_index}",
                 "ratingKey": slug,
                 "provider": "tv.plex.agents.custom.tpdb",

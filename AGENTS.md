@@ -29,7 +29,6 @@ Optional environment variables:
 
 - `TPDB_PORT`: Provider port, defaults to `32500`.
 - `TPDB_LOG_LEVEL`: Logging level, defaults to `INFO`.
-- `TPDB_PUBLIC_URL`: Provider URL reachable by Plex for on-demand image proxying.
 
 Do not commit `.env` files, API keys, or other credentials.
 

@@ -8,5 +8,4 @@ services:
       - TPDB_API_KEY=${TPDB_API_KEY}
       - TPDB_PORT=32500
       - TPDB_LOG_LEVEL=INFO
-      - TPDB_PUBLIC_URL=${TPDB_PUBLIC_URL:-}
     restart: unless-stopped

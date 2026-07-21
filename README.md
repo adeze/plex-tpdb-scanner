@@ -83,7 +83,6 @@ The provider uses environment variables for configuration:
 | `TPDB_API_KEY` | (required) | Your ThePornDB API key |
 | `TPDB_PORT` | `32500` | Port the provider listens on | 
 | `TPDB_LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `TPDB_PUBLIC_URL` | (optional) | URL Plex uses to reach on-demand provider image endpoints |
 
 ## How It Works
 
