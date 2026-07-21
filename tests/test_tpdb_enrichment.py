@@ -183,6 +183,32 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(metadata.get("art"), "https://img/background.jpg")
 
+    def test_portrait_dimensions_preferred_for_primary_poster(self):
+        scene = {
+            "slug": "mixed-orientation",
+            "images": [
+                {"url": "https://img/landscape.jpg", "width": 1600, "height": 900},
+                {"url": "https://img/portrait.jpg", "width": 900, "height": 1350},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://img/portrait.jpg")
+
+    def test_landscape_dimensions_preferred_for_primary_art(self):
+        scene = {
+            "slug": "mixed-orientation",
+            "images": [
+                {"url": "https://img/portrait.jpg", "width": 900, "height": 1350},
+                {"url": "https://img/landscape.jpg", "width": 1600, "height": 900},
+            ],
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("art"), "https://img/landscape.jpg")
+
     def test_vr_scene_first_image_screengrab_last_is_poster(self):
         """Simulates a typical VR payload where the first list item is a screengrab."""
         scene = {

@@ -146,6 +146,37 @@ def _get_first_image(payload: dict[str, Any], fields: tuple[str, ...]) -> str:
     return ""
 
 
+def _get_image_dimensions(value: Any) -> tuple[int, int] | None:
+    """Extract image dimensions when TPDB includes them in an image record."""
+    if not isinstance(value, dict):
+        return None
+    width = value.get("width")
+    height = value.get("height")
+    if isinstance(width, (int, float)) and isinstance(height, (int, float)):
+        if width > 0 and height > 0:
+            return int(width), int(height)
+    for key in ("dimensions", "size"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            dimensions = _get_image_dimensions(nested)
+            if dimensions:
+                return dimensions
+    return None
+
+
+def _get_aspect_scores(dimensions: tuple[int, int] | None) -> tuple[int, int]:
+    """Score portrait and landscape suitability from image dimensions."""
+    if not dimensions:
+        return 0, 0
+    width, height = dimensions
+    ratio = height / width
+    if ratio >= 1.15:
+        return 35, -20
+    if ratio <= 0.85:
+        return -25, 35
+    return 8, 8
+
+
 # Top-level scene fields inspected for image candidates. _image_kind_from_key()
 # is applied to each field name to derive the image kind (poster, background, etc.).
 _SCENE_IMAGE_FIELDS: tuple[str, ...] = (
@@ -162,7 +193,7 @@ _SCENE_IMAGE_FIELDS: tuple[str, ...] = (
 )
 
 
-def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str]]:
+def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, int, int, int, str]]:
     """Collect all image URL candidates from a scene payload with poster and art scores.
 
     Inspects top-level image fields and ``scene["images"]`` (dict or list).
@@ -170,18 +201,20 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
     to classify the image so that screengrabs are deprioritised.
 
     Returns:
-        List of ``(poster_score, art_score, source_score, url)`` tuples.
+        List of ``(poster_score, art_score, source_score, poster_aspect,
+        art_aspect, url)`` tuples.
         Duplicate URLs are silently dropped.
     """
     seen_urls: set[str] = set()
-    candidates: list[tuple[int, int, str]] = []
+    candidates: list[tuple[int, int, int, int, int, str]] = []
 
-    def _add(url: str, kind: str) -> None:
+    def _add(url: str, kind: str, dimensions: tuple[int, int] | None = None) -> None:
         if url and url not in seen_urls:
             seen_urls.add(url)
             p = _POSTER_KIND_SCORES.get(kind, _GENERIC_SCORE)
             a = _ART_KIND_SCORES.get(kind, _GENERIC_SCORE)
-            candidates.append((p, a, _image_source_score(url, kind), url))
+            poster_aspect, art_aspect = _get_aspect_scores(dimensions)
+            candidates.append((p, a, _image_source_score(url, kind), poster_aspect, art_aspect, url))
 
     # Top-level named image fields
     for field in _SCENE_IMAGE_FIELDS:
@@ -194,7 +227,7 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
     if isinstance(images, dict):
         for key, value in images.items():
             url = _extract_string(value)
-            _add(url, _image_kind_from_key(key))
+            _add(url, _image_kind_from_key(key), _get_image_dimensions(value))
     elif isinstance(images, list):
         for item in images:
             if isinstance(item, str):
@@ -210,7 +243,7 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
                             kind = k
                             break
                 url = _extract_string(item)
-                _add(url, _classify_image(kind, url))
+                _add(url, _classify_image(kind, url), _get_image_dimensions(item))
 
     return candidates
 
@@ -230,7 +263,7 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
             sorted(scene.keys()),
         )
         return ""
-    return max(candidates, key=lambda c: (c[0], c[2]))[3]
+    return max(candidates, key=lambda c: (c[0] + c[3], c[2]))[5]
 
 
 def _get_scene_art(scene: dict[str, Any]) -> str:
@@ -248,7 +281,7 @@ def _get_scene_art(scene: dict[str, Any]) -> str:
             sorted(scene.keys()),
         )
         return ""
-    return max(candidates, key=lambda c: (c[1], c[2]))[3]
+    return max(candidates, key=lambda c: (c[1] + c[4], c[2]))[5]
 
 
 def extract_scene_images(scene: dict[str, Any]) -> list[dict[str, str]]:
@@ -264,33 +297,33 @@ def extract_scene_images(scene: dict[str, Any]) -> list[dict[str, str]]:
     if not candidates:
         return []
 
-    by_poster = sorted(candidates, key=lambda c: (c[0], c[2]), reverse=True)
-    by_art = sorted(candidates, key=lambda c: (c[1], c[2]), reverse=True)
+    by_poster = sorted(candidates, key=lambda c: (c[0] + c[3], c[2]), reverse=True)
+    by_art = sorted(candidates, key=lambda c: (c[1] + c[4], c[2]), reverse=True)
 
     entries: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
     # Best poster candidate
-    best_poster_url = by_poster[0][3]
+    best_poster_url = by_poster[0][5]
     entries.append({"type": "poster", "url": best_poster_url})
     seen_urls.add(best_poster_url)
 
     # Best art candidate (must be a different URL from the primary poster)
-    for _, _, _, url in by_art:
+    for _, _, _, _, _, url in by_art:
         if url not in seen_urls:
             entries.append({"type": "art", "url": url})
             seen_urls.add(url)
             break
 
     # Additional poster candidates: distinct URLs with a meaningful poster score
-    for poster_score, _, _, url in by_poster[1:]:
-        if url not in seen_urls and poster_score > _SCREENGRAB_SCORE_THRESHOLD:
+    for poster_score, _, _, poster_aspect, _, url in by_poster[1:]:
+        if url not in seen_urls and poster_score + poster_aspect > _SCREENGRAB_SCORE_THRESHOLD:
             entries.append({"type": "poster", "url": url})
             seen_urls.add(url)
 
     # Additional art candidates: distinct URLs with a meaningful art score
-    for _, art_score, _, url in by_art:
-        if url not in seen_urls and art_score > _SCREENGRAB_SCORE_THRESHOLD:
+    for _, art_score, _, _, art_aspect, url in by_art:
+        if url not in seen_urls and art_score + art_aspect > _SCREENGRAB_SCORE_THRESHOLD:
             entries.append({"type": "art", "url": url})
             seen_urls.add(url)
 

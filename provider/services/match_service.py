@@ -83,9 +83,10 @@ class MatchService(MetadataService):
             if not isinstance(scene, dict):
                 continue
             try:
-                hydrated_scene = await self._hydrate_scene(scene)
-                score = self._candidate_score(title, hydrated_scene, year)
-                scored_results.append((score, hydrated_scene))
+                # Match previews must stay fast. Full performer/site hydration
+                # happens later when Plex requests selected-item metadata.
+                score = self._candidate_score(title, scene, year)
+                scored_results.append((score, scene))
             except Exception as exc:
                 logger.warning("Failed to score scene %s: %s", scene.get("id"), exc)
 

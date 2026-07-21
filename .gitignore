@@ -48,3 +48,8 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local Plex maintenance exports and utilities
+scripts/rematch_legacy_plex.py
+porn-legacy-matches.csv
+porn-rematch-results.csv
