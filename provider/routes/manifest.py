@@ -22,7 +22,11 @@ async def get_manifest():
                     "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
                 },
                 {
-                    "type": 4,  # Other Videos type
+                    "type": 12,  # Clip type
+                    "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
+                },
+                {
+                    "type": 7,  # Person type
                     "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
                 },
             ],

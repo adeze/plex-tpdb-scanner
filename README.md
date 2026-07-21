@@ -17,6 +17,30 @@ Plex Media Server  <-->  TPDB Provider (FastAPI)  <-->  ThePornDB API
 - Docker (recommended) or Python 3.11+
 - ThePornDB API key
 
+## Package management
+
+This project uses [uv](https://docs.astral.sh/uv/) as the canonical Python project and dependency manager.
+
+- `pyproject.toml` declares project metadata and direct dependencies.
+- `uv.lock` pins the complete resolved dependency graph.
+- `requirements.txt` and `requirements-dev.txt` are generated compatibility exports.
+- Docker and CI install from `uv.lock`; do not edit generated requirements files by hand.
+
+Install or update dependencies with:
+
+```bash
+uv sync --dev
+uv add package-name
+uv add --dev development-package-name
+uv lock
+```
+
+Run commands in the locked environment with `uv run`:
+
+```bash
+uv run python -m unittest discover -s tests -p 'test_*.py'
+```
+
 ## Quick Start
 
 ### 1. Get your API key
@@ -36,7 +60,7 @@ cd plex-tpdb-scanner
 export TPDB_API_KEY=your_api_key_here
 
 # Start the provider
-docker-compose up -d
+docker compose up -d --build
 ```
 
 **Using the pre-built image:**
@@ -52,9 +76,9 @@ docker run -d \
 **Running directly with Python:**
 
 ```bash
-pip install -r requirements.txt
+uv sync
 export TPDB_API_KEY=your_api_key_here
-python -m uvicorn provider.main:app --host 0.0.0.0 --port 32500
+uv run uvicorn provider.main:app --host 0.0.0.0 --port 32500
 ```
 
 ### 3. Configure Plex
@@ -82,7 +106,7 @@ The provider uses environment variables for configuration:
 |----------|---------|-------------|
 | `TPDB_API_KEY` | (required) | Your ThePornDB API key |
 | `TPDB_PORT` | `32500` | Port the provider listens on | 
-| `TPDB_LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `TPDB_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ## How It Works
 
@@ -92,10 +116,29 @@ When Plex scans your library, it sends the filename/title to the provider. The p
 2. Returns potential matches with scores
 3. When Plex selects a match, fetches full metadata including:
    - Title, release date, summary
-   - Poster and fanart images
+- Poster and fanart images
    - Studio name
    - Performers with photos
-   - Tags/genres
+- Tags/genres
+
+Artwork is returned as direct TPDB HTTPS URLs using Plex's modern `Image` asset contract. Plex remains responsible for downloading and caching artwork; the provider does not write to Plex's database or `Media` cache.
+
+The provider uses `httpx2.AsyncClient` for pooled asynchronous TPDB and image requests, `rapidfuzz` for candidate ranking, and Pydantic models for Plex request and response envelopes.
+
+## Matching behavior
+
+Matching normalizes filenames before searching by removing technical release tokens such as resolution, codecs, fisheye markers, and VR projection labels. Returned candidates are then ranked using:
+
+- Fuzzy title similarity
+- Studio/site similarity
+- Performer overlap
+- Release-year proximity
+
+Plex receives the ranked candidates and their scores, so ambiguous results can still be confirmed through **Fix Match**.
+
+## Rate limiting
+
+TPDB requests are paced through one process-wide limiter at a conservative two requests per second. The client also honors `Retry-After` on `429` responses, observes rate-limit headers when present, and retries rate-limited requests with bounded backoff. This protects the API during concurrent Plex refreshes while allowing the provider's HTTP handlers to remain asynchronous.
 
 ## API Endpoints
 
@@ -105,6 +148,7 @@ When Plex scans your library, it sends the filename/title to the provider. The p
 | `/library/metadata/matches` | POST | Search for matching scenes |
 | `/library/metadata/{id}` | GET | Get full metadata for a scene |
 | `/library/metadata/{id}/images` | GET | Get image metadata entries for a scene |
+| `/library/metadata/{id}/extras` | GET | Return an empty extras collection |
 
 ## Verification
 
@@ -143,14 +187,21 @@ curl -X POST http://localhost:32500/library/metadata/matches \
 ## Development
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies and create the locked environment
+uv sync --dev
 
 # Run in development mode with auto-reload
-uvicorn provider.main:app --reload --port 32500
+uv run uvicorn provider.main:app --reload --port 32500
 
 # Run with debug logging
-TPDB_LOG_LEVEL=DEBUG uvicorn provider.main:app --port 32500
+TPDB_LOG_LEVEL=DEBUG uv run uvicorn provider.main:app --port 32500
+
+# Run tests
+uv run python -m unittest discover -s tests -p 'test_*.py'
+
+## Releases
+
+Releases use semantic version tags such as `v0.1.0`. GitHub Actions runs the test suite, builds the Docker image, and publishes versioned GHCR tags for releases. Deploy a versioned image tag for reproducibility rather than relying on `latest`.
 ```
 
 ## License

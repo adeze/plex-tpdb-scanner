@@ -5,11 +5,34 @@ ThePornDB API Client
 """
 
 import time
+import logging
 import requests
+import asyncio
+import httpx2
 from urllib.parse import quote, urlencode
 
 BASE_URL = 'https://api.theporndb.net'
 RATE_LIMIT_DELAY = 0.5  # 120 requests/min = 0.5s between requests
+logger = logging.getLogger(__name__)
+
+
+class AsyncRateLimiter:
+    """Process-wide pacing for all async TPDB clients."""
+
+    def __init__(self, minimum_interval: float = RATE_LIMIT_DELAY):
+        self.minimum_interval = minimum_interval
+        self._lock = asyncio.Lock()
+        self._last_request_time = 0.0
+
+    async def wait(self):
+        async with self._lock:
+            elapsed = time.monotonic() - self._last_request_time
+            if elapsed < self.minimum_interval:
+                await asyncio.sleep(self.minimum_interval - elapsed)
+            self._last_request_time = time.monotonic()
+
+
+_ASYNC_RATE_LIMITER = AsyncRateLimiter()
 
 
 class TPDBApiError(Exception):
@@ -105,71 +128,124 @@ class TPDBClient:
             return result['data']
         return None
 
-    def search_scene_by_title(self, studio, title, date=None):
-        """
-        Search for a scene by studio, title, and optional date.
-
-        Args:
-            studio: Studio/site name
-            title: Scene title
-            date: Optional date in YYYY-MM-DD format
-
-        Returns:
-            Best matching scene or None
-        """
-        # Build search query
-        query = f'{studio} {title}'
-        year = date.split('-')[0] if date else None
-
-        results = self.search_scenes(query, year=year)
-
-        if not results:
-            # Try with just the title
-            results = self.search_scenes(title, year=year)
-
-        if results:
-            # If we have a date, try to find exact match
-            if date:
-                for scene in results:
-                    scene_date = scene.get('date', '')
-                    if scene_date == date:
-                        return scene
-
-            # Return first result as best match
-            return results[0]
-
-        return None
-
     def get_performer(self, performer_id):
-        """
-        Get performer details.
-
-        Args:
-            performer_id: Performer ID or slug
-
-        Returns:
-            Performer data dict or None
-        """
+        """Get performer details using the synchronous client."""
         result = self._request('GET', f'/performers/{performer_id}')
         if result and 'data' in result:
             return result['data']
         return None
 
     def get_site(self, site_id):
-        """
-        Get site/studio details.
-
-        Args:
-            site_id: Site ID or slug
-
-        Returns:
-            Site data dict or None
-        """
+        """Get site details using the synchronous client."""
         result = self._request('GET', f'/sites/{site_id}')
         if result and 'data' in result:
             return result['data']
         return None
 
+
+class AsyncTPDBClient:
+    """Async ThePornDB client with pooled connections and bounded retries."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.client = httpx2.AsyncClient(
+            base_url=BASE_URL,
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Accept': 'application/json',
+                'User-Agent': 'TPDB-Plex-Scanner/1.0',
+            },
+            timeout=httpx2.Timeout(30.0),
+            http2=True,
+        )
+    async def _request(self, method: str, endpoint: str, params=None):
+        """Make an async API request with bounded rate-limit retries."""
+        for attempt in range(4):
+            await _ASYNC_RATE_LIMITER.wait()
+            started = time.perf_counter()
+            try:
+                response = await self.client.request(method, endpoint, params=params)
+            except httpx2.HTTPError as exc:
+                logger.error(
+                    "event=tpdb_request method=%s endpoint=%s status=transport_error attempt=%d duration_ms=%.1f error=%s",
+                    method,
+                    endpoint,
+                    attempt + 1,
+                    (time.perf_counter() - started) * 1000,
+                    type(exc).__name__,
+                )
+                raise TPDBApiError(0, str(exc)) from exc
+
+            duration_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "event=tpdb_request method=%s endpoint=%s status=%d attempt=%d duration_ms=%.1f",
+                method,
+                endpoint,
+                response.status_code,
+                attempt + 1,
+                duration_ms,
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 404:
+                return None
+            if response.status_code == 429 and attempt < 3:
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = max(float(retry_after), 1.0) if retry_after else 5 * (attempt + 1)
+                except ValueError:
+                    delay = 5 * (attempt + 1)
+                logger.warning(
+                    "event=tpdb_rate_limit endpoint=%s retry_after_s=%.1f attempt=%d",
+                    endpoint,
+                    delay,
+                    attempt + 1,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            remaining = response.headers.get("X-RateLimit-Remaining")
+            if remaining is not None:
+                try:
+                    if int(remaining) <= 1:
+                        reset = float(response.headers.get("X-RateLimit-Reset", "0"))
+                        if reset > time.time():
+                            await asyncio.sleep(min(reset - time.time(), 60.0))
+                except ValueError:
+                    pass
+
+            try:
+                error_msg = response.json().get('message', response.text)
+            except ValueError:
+                error_msg = response.text
+            raise TPDBApiError(response.status_code, error_msg)
+
+        return None
+
+    async def search_scenes(self, query: str, year=None, hash=None):
+        params = {'parse': query}
+        if year:
+            params['year'] = year
+        if hash:
+            params['hash'] = hash
+        result = await self._request('GET', '/scenes', params)
+        return result.get('data', []) if result and 'data' in result else []
+
+    async def get_scene(self, scene_id: str):
+        result = await self._request('GET', f'/scenes/{scene_id}')
+        return result.get('data') if result and 'data' in result else None
+
+    async def get_performer(self, performer_id: str):
+        result = await self._request('GET', f'/performers/{performer_id}')
+        return result.get('data') if result and 'data' in result else None
+
+    async def get_site(self, site_id: str):
+        result = await self._request('GET', f'/sites/{site_id}')
+        return result.get('data') if result and 'data' in result else None
+
+    async def close(self):
+        await self.client.aclose()
 
 def download_image(url, output_path, session=None):
     """

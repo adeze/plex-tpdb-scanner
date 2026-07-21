@@ -1,153 +1,115 @@
-"""Match service for searching TPDB scenes."""
+"""Async and fuzzy matching service for TPDB scenes."""
 
 import logging
+import re
 import sys
-from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
-# Add parent directory to path to import metadata_tool
+from rapidfuzz import fuzz
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from metadata_tool.api import TPDBClient
-
-from provider.config import get_settings
 from provider.mappers.tpdb_to_plex import map_scene_to_match
+from provider.services.metadata_service import MetadataService
 
 logger = logging.getLogger(__name__)
 
+_TECHNICAL_TOKENS = re.compile(
+    r"\b(?:2160p|1440p|1080p|720p|4k|8k|hevc|h265|h264|av1|x264|x265|hdr|sdr|"
+    r"fisheye\d*|lr|vr|180|360|3d|full[- ]?side[- ]?by[- ]?side|side[- ]?by[- ]?side)\b",
+    re.IGNORECASE,
+)
 
-class MatchService:
-    """Service for matching media to TPDB scenes."""
 
-    _CACHE_LIMIT = 512
+def normalize_match_text(value: str) -> str:
+    """Normalize filenames and titles before searching and scoring."""
+    value = _TECHNICAL_TOKENS.sub(" ", value or "")
+    value = re.sub(r"[_./\\-]+", " ", value)
+    value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip().lower()
 
-    def __init__(self):
-        settings = get_settings()
-        self.client = TPDBClient(settings.tpdb_api_key)
-        self._performer_cache: OrderedDict[str, dict | None] = OrderedDict()
-        self._site_cache: OrderedDict[str, dict | None] = OrderedDict()
 
-    @staticmethod
-    def _first_identifier(payload: dict, keys: tuple[str, ...]) -> str:
-        """Get the first non-empty identifier from payload keys."""
-        for key in keys:
-            value = payload.get(key)
-            if value is not None and value != "":
-                return str(value)
-        return ""
+class MatchService(MetadataService):
+    """Match Plex media against TPDB using normalized fuzzy scoring."""
 
     @staticmethod
-    def _has_image(payload: dict) -> bool:
-        """Check if payload already includes any image-like field."""
-        return any(payload.get(key) for key in ("image", "poster", "thumb", "photo", "avatar", "face"))
+    def _candidate_score(query: str, scene: dict, year: Optional[int]) -> int:
+        query_text = normalize_match_text(query)
+        title = normalize_match_text(str(scene.get("title", "")))
+        site = scene.get("site") or scene.get("site_hydrated") or {}
+        site_name = normalize_match_text(str(site.get("name", ""))) if isinstance(site, dict) else ""
+        combined = normalize_match_text(f"{site_name} {title}")
 
-    def _get_cached_performer(self, performer_identifier: str) -> Optional[dict]:
-        """Get performer details with lightweight in-memory cache."""
-        if not performer_identifier:
-            return None
-        if performer_identifier in self._performer_cache:
-            self._performer_cache.move_to_end(performer_identifier)
-        else:
-            if len(self._performer_cache) >= self._CACHE_LIMIT:
-                self._performer_cache.popitem(last=False)
-            self._performer_cache[performer_identifier] = self.client.get_performer(performer_identifier)
-        return self._performer_cache[performer_identifier]
+        title_score = max(
+            fuzz.WRatio(query_text, title),
+            fuzz.WRatio(query_text, combined),
+            fuzz.token_set_ratio(query_text, title),
+        )
 
-    def _get_cached_site(self, site_identifier: str) -> Optional[dict]:
-        """Get site details with lightweight in-memory cache."""
-        if not site_identifier:
-            return None
-        if site_identifier in self._site_cache:
-            self._site_cache.move_to_end(site_identifier)
-        else:
-            if len(self._site_cache) >= self._CACHE_LIMIT:
-                self._site_cache.popitem(last=False)
-            self._site_cache[site_identifier] = self.client.get_site(site_identifier)
-        return self._site_cache[site_identifier]
+        performer_names = []
+        for performer in scene.get("performers") or []:
+            if isinstance(performer, dict):
+                performer_names.append(str(performer.get("name", "")))
+        performer_score = max(
+            (fuzz.token_set_ratio(query_text, normalize_match_text(name)) for name in performer_names if name),
+            default=0,
+        )
 
-    def _hydrate_scene(self, scene: dict) -> dict:
-        """Hydrate sparse scene payload with performer and site details.
+        year_score = 0
+        scene_date = str(scene.get("date", ""))
+        if year and scene_date[:4].isdigit():
+            difference = abs(year - int(scene_date[:4]))
+            year_score = 10 if difference == 0 else 5 if difference == 1 else 0
 
-        Inline scene fields take precedence over hydrated fields when both exist.
-        """
-        performers = scene.get("performers")
-        if isinstance(performers, list):
-            hydrated_performers = []
-            for performer in performers:
-                if not isinstance(performer, dict):
-                    hydrated_performers.append(performer)
-                    continue
-                hydrated_performer = performer
-                if not self._has_image(performer):
-                    performer_identifier = self._first_identifier(performer, ("id", "slug"))
-                    details = self._get_cached_performer(performer_identifier)
-                    if isinstance(details, dict):
-                        hydrated_performer = dict(details)
-                        hydrated_performer.update(performer)
-                hydrated_performers.append(hydrated_performer)
-            scene["performers"] = hydrated_performers
+        score = (title_score * 0.75) + (performer_score * 0.10) + year_score
+        if site_name and site_name in query_text:
+            score += 10
+        return max(0, min(100, round(score)))
 
-        site = scene.get("site")
-        site_identifier = ""
-        if isinstance(site, dict):
-            site_identifier = self._first_identifier(site, ("id", "slug"))
-        if not site_identifier:
-            site_identifier = self._first_identifier(scene, ("site_id", "site_slug"))
-
-        hydrated_site = self._get_cached_site(site_identifier)
-        if isinstance(hydrated_site, dict):
-            merged_site = dict(hydrated_site)
-            if isinstance(site, dict):
-                merged_site.update(site)
-            scene["site_hydrated"] = hydrated_site
-            scene["site"] = merged_site
-
-        return scene
-
-    def search(self, title: str, year: Optional[int] = None, media_type: int = 1) -> list[dict]:
-        """
-        Search for scenes matching the given title.
-
-        Args:
-            title: Search query (typically "Studio - Scene Title")
-            year: Optional release year
-            media_type: Plex media type (1=movie, 4=other videos)
-
-        Returns:
-            List of Plex-formatted match results
-        """
+    async def search(self, title: str, year: Optional[int] = None, media_type: int = 1) -> list[dict]:
         logger.info("Searching for: %s (year=%s, type=%d)", title, year, media_type)
-
-        results = self.client.search_scenes(title, year=year)
+        normalized_title = normalize_match_text(title)
+        results = await self.client.search_scenes(normalized_title, year=year)
+        if not results and normalized_title != title:
+            results = await self.client.search_scenes(title, year=year)
 
         if not results:
             logger.info("No results found for: %s", title)
             return []
 
-        logger.info("Found %d result(s) for: %s", len(results), title)
-
-        matches = []
-        for i, scene in enumerate(results):
+        scored_results = []
+        for scene in results:
+            if not isinstance(scene, dict):
+                continue
             try:
-                scene = self._hydrate_scene(scene)
-                # Decrease score for each subsequent result
-                score = max(100 - (i * 5), 50)
-                match = map_scene_to_match(scene, score=score, media_type=media_type)
-                matches.append(match)
-            except Exception as e:
-                logger.warning("Failed to map scene %s: %s", scene.get("id"), e)
+                hydrated_scene = await self._hydrate_scene(scene)
+                score = self._candidate_score(title, hydrated_scene, year)
+                scored_results.append((score, hydrated_scene))
+            except Exception as exc:
+                logger.warning("Failed to score scene %s: %s", scene.get("id"), exc)
 
+        scored_results.sort(key=lambda item: item[0], reverse=True)
+        matches = []
+        for score, scene in scored_results:
+            try:
+                matches.append(map_scene_to_match(scene, score=score, media_type=media_type))
+            except Exception as exc:
+                logger.warning("Failed to map scene %s: %s", scene.get("id"), exc)
+        logger.info("Found %d scored result(s) for: %s", len(matches), title)
         return matches
 
 
-# Global service instance
 _match_service: Optional[MatchService] = None
 
 
 def get_match_service() -> MatchService:
-    """Get or create the match service singleton."""
     global _match_service
     if _match_service is None:
         _match_service = MatchService()
     return _match_service
+
+
+async def close_match_service():
+    if _match_service is not None:
+        await _match_service.close()

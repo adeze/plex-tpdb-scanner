@@ -2,12 +2,16 @@
 
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
 from provider.config import get_settings
 from provider.routes import manifest, matches, metadata
+from provider.routes.metadata import close_image_client
+from provider.services.match_service import close_match_service
+from provider.services.metadata_service import close_metadata_service
 
 # Configure logging
 settings = get_settings()
@@ -16,6 +20,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+# Our application middleware emits the useful request summary. Keep transport
+# libraries quiet unless the configured application log level is DEBUG.
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -23,8 +31,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("TPDB Metadata Provider starting on port %d", settings.tpdb_port)
-    yield
-    logger.info("TPDB Metadata Provider shutting down")
+    try:
+        yield
+    finally:
+        await close_image_client()
+        await close_match_service()
+        await close_metadata_service()
+        logger.info("TPDB Metadata Provider shutting down")
 
 
 app = FastAPI(
@@ -34,12 +47,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.get("/health")
+async def healthcheck():
+    """Return a lightweight liveness response for Docker and Compose."""
+    return {"status": "ok"}
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log all incoming requests."""
-    logger.info(">>> REQUEST: %s %s", request.method, request.url.path)
-    response = await call_next(request)
-    logger.info("<<< RESPONSE: %s %s -> %d", request.method, request.url.path, response.status_code)
+    """Log one correlated, timed summary for every Plex request."""
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.exception(
+            "event=http_request method=%s path=%s status=500 duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - started) * 1000
+    logger.info(
+        "event=http_request method=%s path=%s status=%d duration_ms=%.1f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
     return response
 
 

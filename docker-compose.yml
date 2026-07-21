@@ -2,6 +2,7 @@ services:
   tpdb-provider:
     build: .
     container_name: tpdb-provider
+    init: true
     ports:
       - "32500:32500"
     environment:
@@ -9,3 +10,8 @@ services:
       - TPDB_PORT=32500
       - TPDB_LOG_LEVEL=INFO
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:32500/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -59,7 +59,7 @@ TPDB_API_KEY=your_key docker-compose up -d
 - `GET /library/metadata/{rating_key}`: Return full scene metadata.
 - `GET /library/metadata/{rating_key}/images`: Return Plex image entries.
 
-The provider supports Plex media types `1` (movie) and `4` (other video). Scene
+The provider supports Plex media types `1` (movie), `12` (clip), and `7` (person). Scene
 IDs/slugs are used as Plex rating keys. Image mapping should preserve poster
 and background/art fallbacks and avoid duplicate image URLs.
 

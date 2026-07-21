@@ -1,6 +1,6 @@
 import unittest
 from collections import OrderedDict
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from provider.mappers.tpdb_to_plex import (
     extract_scene_images,
@@ -39,7 +39,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         )
         self.assertEqual(
             metadata.get("Role"),
-            [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
+            [{"tag": "Performer", "id": "tv.plex.agents.custom.tpdb://person/p1", "key": "/library/metadata/person/p1", "url": "https://theporndb.net/performers/p1", "thumb": "https://img/p.jpg"}],
         )
         self.assertIs(metadata.get("isAdult"), True)
         self.assertEqual(
@@ -89,7 +89,7 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(
             match.get("Role"),
-            [{"tag": "Performer", "id": "tpdb://performer/p1", "thumb": "https://img/p.jpg"}],
+            [{"tag": "Performer", "id": "tv.plex.agents.custom.tpdb://person/p1", "key": "/library/metadata/person/p1", "url": "https://theporndb.net/performers/p1", "thumb": "https://img/p.jpg"}],
         )
 
     def test_map_scene_to_images_returns_unique_image_urls(self):
@@ -104,7 +104,7 @@ class MapperEnrichmentTests(unittest.TestCase):
         images = map_scene_to_images(scene)
         image_types = {image["type"] for image in images}
 
-        self.assertSetEqual(image_types, {"poster", "art"})
+        self.assertSetEqual(image_types, {"coverPoster", "background"})
 
     def test_map_scene_to_images_returns_empty_when_no_images(self):
         scene = {
@@ -133,10 +133,10 @@ class MapperEnrichmentTests(unittest.TestCase):
         self.assertEqual(metadata.get("art"), "https://img/background-full.jpg")
         self.assertEqual(
             metadata.get("Role"),
-            [{"tag": "Performer", "id": "tpdb://performer/perf-slug", "thumb": "https://img/performer-face.jpg"}],
+            [{"tag": "Performer", "id": "tv.plex.agents.custom.tpdb://person/perf-slug", "key": "/library/metadata/person/perf-slug", "url": "https://theporndb.net/performers/perf-slug", "thumb": "https://img/performer-face.jpg"}],
         )
-        self.assertEqual(image_by_type.get("poster"), "https://img/poster-large.jpg")
-        self.assertEqual(image_by_type.get("art"), "https://img/background-full.jpg")
+        self.assertEqual(image_by_type.get("coverPoster"), "https://img/poster-large.jpg")
+        self.assertEqual(image_by_type.get("background"), "https://img/background-full.jpg")
 
     def test_role_identifier_prefers_performer_id_over_slug(self):
         scene = {
@@ -147,7 +147,7 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         metadata = map_scene_to_metadata(scene)
 
-        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "id": "tpdb://performer/performer-id"}])
+        self.assertEqual(metadata.get("Role"), [{"tag": "Performer", "id": "tv.plex.agents.custom.tpdb://person/performer-id", "key": "/library/metadata/person/performer-id", "url": "https://theporndb.net/performers/performer-slug"}])
 
     # ------------------------------------------------------------------ #
     # Image selection: poster/background preference and VR screengrab fix  #
@@ -209,8 +209,8 @@ class MapperEnrichmentTests(unittest.TestCase):
         # Best art is the fanart
         self.assertEqual(metadata.get("art"), "https://cdn/vr-bg.jpg")
         # map_scene_to_images primary slots
-        self.assertEqual(image_by_type.get("poster"), "https://cdn/vr-poster.jpg")
-        self.assertEqual(image_by_type.get("art"), "https://cdn/vr-bg.jpg")
+        self.assertEqual(image_by_type.get("coverPoster"), "https://cdn/vr-poster.jpg")
+        self.assertEqual(image_by_type.get("background"), "https://cdn/vr-bg.jpg")
 
     def test_images_list_string_fallback_when_no_type_hints(self):
         """Plain string image lists without type hints are handled as generic candidates."""
@@ -254,7 +254,7 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(metadata.get("thumb"), "https://cdn.example/scene-cover-desktop.webp")
         self.assertEqual(metadata.get("art"), "https://cdn.example/scene/background/bg-scene.jpg")
-        self.assertEqual(images[0]["type"], "poster")
+        self.assertEqual(images[0]["type"], "coverPoster")
         self.assertEqual(images[0]["url"], "https://cdn.example/scene-cover-desktop.webp")
 
     def test_encoded_background_url_does_not_outrank_cover(self):
@@ -283,8 +283,8 @@ class MapperEnrichmentTests(unittest.TestCase):
         }
 
         images = map_scene_to_images(scene)
-        poster_urls = [img["url"] for img in images if img["type"] == "poster"]
-        art_urls = [img["url"] for img in images if img["type"] == "art"]
+        poster_urls = [img["url"] for img in images if img["type"] == "coverPoster"]
+        art_urls = [img["url"] for img in images if img["type"] == "background"]
 
         # Both poster-like candidates should be present
         self.assertIn("https://img/poster1.jpg", poster_urls)
@@ -352,18 +352,18 @@ class MapperEnrichmentTests(unittest.TestCase):
             self.assertIn("url", entry)
 
 
-class MetadataHydrationTests(unittest.TestCase):
-    def test_hydrates_performer_and_site_with_caching(self):
+class MetadataHydrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hydrates_performer_and_site_with_caching(self):
         service = MetadataService.__new__(MetadataService)
         service._performer_cache = OrderedDict()
         service._site_cache = OrderedDict()
         service.client = Mock()
-        service.client.get_performer.return_value = {
+        service.client.get_performer = AsyncMock(return_value={
             "id": "p1",
             "name": "Hydrated Performer",
             "image": "https://img/hydrated.jpg",
-        }
-        service.client.get_site.return_value = {"id": "s1", "name": "Hydrated Studio"}
+        })
+        service.client.get_site = AsyncMock(return_value={"id": "s1", "name": "Hydrated Studio"})
 
         scene = {
             "id": "scene-1",
@@ -371,34 +371,34 @@ class MetadataHydrationTests(unittest.TestCase):
             "performers": [{"id": "p1", "name": "Inline Name"}],
         }
 
-        hydrated = service._hydrate_scene(dict(scene))
-        hydrated_again = service._hydrate_scene(dict(scene))
+        hydrated = await service._hydrate_scene(dict(scene))
+        hydrated_again = await service._hydrate_scene(dict(scene))
 
         self.assertEqual(hydrated["performers"][0]["name"], "Inline Name")
         self.assertEqual(hydrated["performers"][0]["image"], "https://img/hydrated.jpg")
         self.assertEqual(hydrated["site"]["name"], "Hydrated Studio")
         self.assertEqual(hydrated_again["site"]["name"], "Hydrated Studio")
-        service.client.get_performer.assert_called_once_with("p1")
-        service.client.get_site.assert_called_once_with("s1")
+        service.client.get_performer.assert_awaited_once_with("p1")
+        service.client.get_site.assert_awaited_once_with("s1")
 
-    def test_hydrated_performer_name_used_when_inline_missing(self):
+    async def test_hydrated_performer_name_used_when_inline_missing(self):
         service = MetadataService.__new__(MetadataService)
         service._performer_cache = OrderedDict()
         service._site_cache = OrderedDict()
         service.client = Mock()
-        service.client.get_performer.return_value = {
+        service.client.get_performer = AsyncMock(return_value={
             "id": "p2",
             "name": "Hydrated Name",
             "image": "https://img/hydrated-2.jpg",
-        }
-        service.client.get_site.return_value = None
+        })
+        service.client.get_site = AsyncMock(return_value=None)
 
         scene = {
             "id": "scene-2",
             "performers": [{"id": "p2"}],
         }
 
-        hydrated = service._hydrate_scene(scene)
+        hydrated = await service._hydrate_scene(scene)
 
         self.assertEqual(hydrated["performers"][0]["name"], "Hydrated Name")
 

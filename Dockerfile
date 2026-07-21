@@ -1,14 +1,18 @@
 FROM python:3.11-slim
 
+COPY --from=ghcr.io/astral-sh/uv:0.11.1 /uv /uvx /bin/
+
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the locked runtime environment.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY metadata_tool/ metadata_tool/
 COPY provider/ provider/
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose port
 EXPOSE 32500

@@ -6,11 +6,11 @@ from urllib.parse import unquote
 
 # Plex type mappings
 PLEX_TYPE_MOVIE = 1
-PLEX_TYPE_OTHER = 4
+PLEX_TYPE_CLIP = 12
 
 TYPE_STRINGS = {
     PLEX_TYPE_MOVIE: "movie",
-    PLEX_TYPE_OTHER: "clip",
+    PLEX_TYPE_CLIP: "clip",
 }
 
 logger = logging.getLogger(__name__)
@@ -403,6 +403,38 @@ def _extract_provider_id(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+def _performer_web_url(performer: dict[str, Any], identifier: str) -> str:
+    """Return the canonical public ThePornDB performer URL."""
+    for key in ("url", "link", "permalink", "website"):
+        value = performer.get(key)
+        if isinstance(value, str) and value.startswith("https://theporndb.net/"):
+            return value
+    return f"https://theporndb.net/performers/{performer.get('slug') or identifier}"
+
+
+def map_performer_to_metadata(performer: dict[str, Any]) -> dict[str, Any]:
+    """Map a TPDB performer record to Plex person metadata."""
+    identifier = _extract_provider_id(performer, ("id", "slug"))
+    name = performer.get("name") or performer.get("title") or "Unknown performer"
+    metadata: dict[str, Any] = {
+        "type": "person",
+        "guid": f"tv.plex.agents.custom.tpdb://person/{identifier}",
+        "key": f"/library/metadata/person/{identifier}",
+        "ratingKey": identifier,
+        "title": name,
+        "name": name,
+        "url": _performer_web_url(performer, identifier),
+        "Guid": [{"id": f"tpdb://performer/{identifier}"}],
+    }
+    image = _get_first_image(
+        performer,
+        ("image", "poster", "thumb", "photo", "avatar", "face"),
+    )
+    if image:
+        metadata["thumb"] = image
+    return metadata
+
+
 def _get_guid_entries(scene: dict[str, Any]) -> list[dict[str, str]]:
     """Build Plex Guid entries for TPDB and known external providers."""
     external_sources: list[dict[str, Any]] = [scene]
@@ -444,7 +476,9 @@ def _map_roles(performers: Any) -> list[dict[str, str]]:
         role = {"tag": performer.get("name", "")}
         performer_id = _extract_provider_id(performer, ("id", "slug"))
         if performer_id:
-            role["id"] = f"tpdb://performer/{performer_id}"
+            role["id"] = f"tv.plex.agents.custom.tpdb://person/{performer_id}"
+            role["key"] = f"/library/metadata/person/{performer_id}"
+            role["url"] = _performer_web_url(performer, performer_id)
         performer_image = _get_first_image(
             performer,
             ("image", "poster", "thumb", "photo", "avatar", "face"),
@@ -465,7 +499,7 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
     Args:
         scene: TPDB scene data
         score: Match confidence score (0-100)
-        media_type: Plex media type (1=movie, 4=other videos)
+        media_type: Plex media type (1=movie, 12=clip)
 
     Returns:
         Plex-formatted match result with full metadata
@@ -560,7 +594,7 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
 
     Args:
         scene: TPDB scene data
-        media_type: Plex media type (1=movie, 4=other videos)
+        media_type: Plex media type (1=movie, 12=clip)
 
     Returns:
         Plex-formatted metadata
