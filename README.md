@@ -53,7 +53,7 @@ Get your API key from: https://theporndb.net (create account > API settings)
 
 ```bash
 # Clone the repository
-git clone https://github.com/mystrock/plex-tpdb-scanner.git
+git clone https://github.com/adeze/plex-tpdb-scanner.git
 cd plex-tpdb-scanner
 
 # Set your API key
@@ -70,7 +70,7 @@ docker run -d \
   --name tpdb-provider \
   -p 32500:32500 \
   -e TPDB_API_KEY=your_api_key_here \
-  ghcr.io/mystrock/plex-tpdb-scanner:latest
+  ghcr.io/adeze/plex-tpdb-scanner:latest
 ```
 
 **Running directly with Python:**
@@ -198,10 +198,17 @@ TPDB_LOG_LEVEL=DEBUG uv run uvicorn provider.main:app --port 32500
 
 # Run tests
 uv run python -m unittest discover -s tests -p 'test_*.py'
+```
 
 ## Releases
 
-Releases use semantic version tags such as `v0.1.0`. GitHub Actions runs the test suite, builds the Docker image, and publishes versioned GHCR tags for releases. Deploy a versioned image tag for reproducibility rather than relying on `latest`.
+Releases use semantic version tags such as `v0.2.0`. Releases are currently published manually: run the test suite, create a Git tag and GitHub Release, then build and push matching Docker tags to GHCR. Deploy a versioned image tag for reproducibility rather than relying on `latest`.
+
+```bash
+docker build -t ghcr.io/adeze/plex-tpdb-scanner:0.2.0 .
+docker tag ghcr.io/adeze/plex-tpdb-scanner:0.2.0 ghcr.io/adeze/plex-tpdb-scanner:latest
+docker push ghcr.io/adeze/plex-tpdb-scanner:0.2.0
+docker push ghcr.io/adeze/plex-tpdb-scanner:latest
 ```
 
 ## License

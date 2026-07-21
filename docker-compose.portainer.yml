@@ -1,6 +1,6 @@
 services:
   tpdb-provider:
-    image: ghcr.io/mystrock/plex-tpdb-scanner:latest
+    image: ghcr.io/adeze/plex-tpdb-scanner:${TPDB_VERSION:-latest}
     container_name: tpdb-provider
     init: true
     ports:
