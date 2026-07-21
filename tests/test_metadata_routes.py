@@ -8,6 +8,26 @@ from provider.routes import metadata as metadata_routes
 
 
 class MetadataRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_image_proxies_selected_scene_image(self):
+        service = Mock()
+        service.get_scene.return_value = {
+            "slug": "scene-slug",
+            "image": "https://cdn.example/cover.jpg",
+        }
+        upstream = Mock(status_code=200, content=b"jpeg-bytes")
+        upstream.headers = {"content-type": "image/jpeg"}
+
+        with patch("provider.routes.metadata.get_metadata_service", return_value=service), patch(
+            "provider.routes.metadata.requests.get", return_value=upstream
+        ) as get_request:
+            response = await metadata_routes.get_image("scene-slug", "poster", 0)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b"jpeg-bytes")
+        self.assertEqual(response.media_type, "image/jpeg")
+        get_request.assert_called_once()
+        self.assertEqual(get_request.call_args.args[0], "https://cdn.example/cover.jpg")
+
     async def test_get_metadata_images_returns_entries(self):
         service = Mock()
         service.get_images.return_value = [

@@ -1,7 +1,10 @@
 """Map TPDB scene data to Plex metadata format."""
 
 import logging
+import os
 from typing import Any
+from urllib.parse import unquote
+from urllib.parse import quote
 
 # Plex type mappings
 PLEX_TYPE_MOVIE = 1
@@ -13,6 +16,21 @@ TYPE_STRINGS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _plex_image_url(scene: dict[str, Any], image_url: str, image_type: str) -> str:
+    """Build an on-demand provider image URL when configured."""
+    public_url = os.getenv("TPDB_PUBLIC_URL", "").strip().rstrip("/")
+    if not public_url or not image_url:
+        return image_url
+
+    slug = scene.get("slug", scene.get("id", ""))
+    typed_entries = [entry for entry in extract_scene_images(scene) if entry["type"] == image_type]
+    for index, entry in enumerate(typed_entries):
+        if entry["type"] == image_type and entry["url"] == image_url:
+            return f"{public_url}/library/metadata/{quote(str(slug), safe='')}/image/{image_type}/{index}"
+
+    return image_url
 
 
 def _extract_string(value: Any, depth: int = 0, max_depth: int = 5) -> str:
@@ -101,6 +119,40 @@ def _image_kind_from_key(key: str) -> str:
     return "generic"
 
 
+def _image_kind_from_url(url: str) -> str:
+    """Infer an image kind from URL path/name hints when payload fields conflict."""
+    value = unquote(url.lower())
+    if any(token in value for token in ("screengrab", "screenshot", "screengrabs", "screenshots")):
+        return "screengrab"
+    if any(token in value for token in ("/still", "-still", "_still", "/frame", "-frame", "_frame")):
+        return "still"
+    if any(token in value for token in ("/background", "-background", "_background", "/backdrop")):
+        return "background"
+    if any(token in value for token in ("/fanart", "-fanart", "_fanart")):
+        return "fanart"
+    if any(token in value for token in ("/cover", "-cover", "_cover")):
+        return "cover"
+    return "generic"
+
+
+def _classify_image(field_kind: str, url: str) -> str:
+    """Combine payload field and URL hints, preferring explicit URL semantics."""
+    url_kind = _image_kind_from_url(url)
+    return url_kind if url_kind != "generic" else field_kind
+
+
+def _image_source_score(url: str, kind: str) -> int:
+    """Prefer canonical assets over transformed thumbnail proxies for art."""
+    if kind in ("background", "art", "fanart", "backdrop"):
+        value = url.lower()
+        if "://thumb." in value or ".thumb." in value:
+            return 10
+        if "cdn.theporndb.net" in value:
+            return 30
+        return 20
+    return 0
+
+
 def _get_first_image(payload: dict[str, Any], fields: tuple[str, ...]) -> str:
     """Return the first non-empty image-like value from known fields."""
     for field in fields:
@@ -135,7 +187,7 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
     to classify the image so that screengrabs are deprioritised.
 
     Returns:
-        List of ``(poster_score, art_score, url)`` tuples in insertion order.
+        List of ``(poster_score, art_score, source_score, url)`` tuples.
         Duplicate URLs are silently dropped.
     """
     seen_urls: set[str] = set()
@@ -146,13 +198,13 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
             seen_urls.add(url)
             p = _POSTER_KIND_SCORES.get(kind, _GENERIC_SCORE)
             a = _ART_KIND_SCORES.get(kind, _GENERIC_SCORE)
-            candidates.append((p, a, url))
+            candidates.append((p, a, _image_source_score(url, kind), url))
 
     # Top-level named image fields
     for field in _SCENE_IMAGE_FIELDS:
         if field in scene:
             url = _extract_string(scene[field])
-            _add(url, _image_kind_from_key(field))
+            _add(url, _classify_image(_image_kind_from_key(field), url))
 
     # scene["images"] — dict or list
     images = scene.get("images")
@@ -175,7 +227,7 @@ def _collect_image_candidates(scene: dict[str, Any]) -> list[tuple[int, int, str
                             kind = k
                             break
                 url = _extract_string(item)
-                _add(url, kind)
+                _add(url, _classify_image(kind, url))
 
     return candidates
 
@@ -195,7 +247,7 @@ def _get_scene_poster(scene: dict[str, Any]) -> str:
             sorted(scene.keys()),
         )
         return ""
-    return max(candidates, key=lambda c: c[0])[2]
+    return max(candidates, key=lambda c: (c[0], c[2]))[3]
 
 
 def _get_scene_art(scene: dict[str, Any]) -> str:
@@ -213,7 +265,7 @@ def _get_scene_art(scene: dict[str, Any]) -> str:
             sorted(scene.keys()),
         )
         return ""
-    return max(candidates, key=lambda c: c[1])[2]
+    return max(candidates, key=lambda c: (c[1], c[2]))[3]
 
 
 def extract_scene_images(scene: dict[str, Any]) -> list[dict[str, str]]:
@@ -229,32 +281,32 @@ def extract_scene_images(scene: dict[str, Any]) -> list[dict[str, str]]:
     if not candidates:
         return []
 
-    by_poster = sorted(candidates, key=lambda c: c[0], reverse=True)
-    by_art = sorted(candidates, key=lambda c: c[1], reverse=True)
+    by_poster = sorted(candidates, key=lambda c: (c[0], c[2]), reverse=True)
+    by_art = sorted(candidates, key=lambda c: (c[1], c[2]), reverse=True)
 
     entries: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
     # Best poster candidate
-    best_poster_url = by_poster[0][2]
+    best_poster_url = by_poster[0][3]
     entries.append({"type": "poster", "url": best_poster_url})
     seen_urls.add(best_poster_url)
 
     # Best art candidate (must be a different URL from the primary poster)
-    for _, _, url in by_art:
+    for _, _, _, url in by_art:
         if url not in seen_urls:
             entries.append({"type": "art", "url": url})
             seen_urls.add(url)
             break
 
     # Additional poster candidates: distinct URLs with a meaningful poster score
-    for poster_score, _, url in by_poster[1:]:
+    for poster_score, _, _, url in by_poster[1:]:
         if url not in seen_urls and poster_score > _SCREENGRAB_SCORE_THRESHOLD:
             entries.append({"type": "poster", "url": url})
             seen_urls.add(url)
 
     # Additional art candidates: distinct URLs with a meaningful art score
-    for _, art_score, url in by_art:
+    for _, art_score, _, url in by_art:
         if url not in seen_urls and art_score > _SCREENGRAB_SCORE_THRESHOLD:
             entries.append({"type": "art", "url": url})
             seen_urls.add(url)
@@ -272,6 +324,7 @@ def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
     scene_images = extract_scene_images(scene)
 
     image_entries = []
+    type_indices = {"poster": 0, "art": 0}
     seen_urls: set[str] = set()
     for entry in scene_images:
         image_type = entry["type"]
@@ -285,11 +338,14 @@ def map_scene_to_images(scene: dict[str, Any]) -> list[dict[str, Any]]:
             )
             continue
         seen_urls.add(image_url)
+        type_index = type_indices[image_type]
+        type_indices[image_type] += 1
+        plex_image_type = {"poster": "coverPoster", "art": "background"}[image_type]
         image_entries.append(
             {
-                "type": image_type,
-                "url": image_url,
-                "key": f"/library/metadata/{slug}/images/{image_type}",
+                "type": plex_image_type,
+                "url": _plex_image_url(scene, image_url, image_type),
+                "key": f"/library/metadata/{slug}/images/{plex_image_type}/{type_index}",
                 "ratingKey": slug,
                 "provider": "tv.plex.agents.custom.tpdb",
             }
@@ -461,6 +517,8 @@ def map_scene_to_match(scene: dict[str, Any], score: int = 100, media_type: int 
         match_result["year"] = year
 
     if poster:
+        # Plex's match UI fetches this preview directly; keep it as the
+        # canonical TPDB HTTPS asset rather than the on-demand provider proxy.
         match_result["thumb"] = poster
 
     if background:
@@ -556,10 +614,16 @@ def map_scene_to_metadata(scene: dict[str, Any], media_type: int = 1) -> dict[st
         metadata["originallyAvailableAt"] = date
 
     if poster:
+        # Plex metadata refreshes fetch the primary artwork directly, just as
+        # the match preview does. Keep the proxy for on-demand image assets.
         metadata["thumb"] = poster
 
     if background:
         metadata["art"] = background
+
+    # Expose the complete asset list on the metadata object. Plex uses these
+    # entries to fetch and persist artwork during metadata refreshes.
+    metadata["Image"] = map_scene_to_images(scene)
 
     if studio:
         metadata["studio"] = studio

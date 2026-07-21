@@ -240,6 +240,37 @@ class MapperEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(metadata.get("thumb"), "https://img/top-poster.jpg")
 
+    def test_cover_url_beats_mislabelled_background_poster_field(self):
+        """TPDB may expose a real cover as image and a background as poster."""
+        scene = {
+            "slug": "scene-cover",
+            "image": "https://cdn.example/scene-cover-desktop.webp",
+            "poster": "https://thumb.example/scene/background/bg-scene.jpg",
+            "background": "https://cdn.example/scene/background/bg-scene.jpg",
+        }
+
+        metadata = map_scene_to_metadata(scene)
+        images = map_scene_to_images(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://cdn.example/scene-cover-desktop.webp")
+        self.assertEqual(metadata.get("art"), "https://cdn.example/scene/background/bg-scene.jpg")
+        self.assertEqual(images[0]["type"], "poster")
+        self.assertEqual(images[0]["url"], "https://cdn.example/scene-cover-desktop.webp")
+
+    def test_encoded_background_url_does_not_outrank_cover(self):
+        """TPDB thumbnail URLs encode the background path with percent escapes."""
+        scene = {
+            "slug": "scene-encoded",
+            "image": "https://cdn.example/scene-cover.webp",
+            "poster": "https://thumb.theporndb.net/x/scene%2Fbackground%2Fbg-scene.jpg",
+            "background": "https://cdn.theporndb.net/scene/background/bg-scene.jpg",
+        }
+
+        metadata = map_scene_to_metadata(scene)
+
+        self.assertEqual(metadata.get("thumb"), "https://cdn.example/scene-cover.webp")
+        self.assertEqual(metadata.get("art"), "https://cdn.theporndb.net/scene/background/bg-scene.jpg")
+
     def test_map_scene_to_images_emits_multiple_poster_candidates(self):
         """When multiple poster-like images exist, map_scene_to_images emits them all."""
         scene = {

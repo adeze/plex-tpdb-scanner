@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     tpdb_api_key: str
     tpdb_port: int = 32500
     tpdb_log_level: str = "INFO"
+    tpdb_public_url: str = ""
 
     class Config:
         env_file = ".env"

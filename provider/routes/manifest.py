@@ -29,7 +29,6 @@ async def get_manifest():
             "Feature": [
                 {"type": "match", "key": "/library/metadata/matches"},
                 {"type": "metadata", "key": "/library/metadata"},
-                {"type": "images", "key": "/library/metadata"},
             ],
         }
     }
