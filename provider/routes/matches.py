@@ -1,11 +1,18 @@
 """Match endpoint for Plex metadata matching."""
 
 import logging
+from json import JSONDecodeError
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
-from provider.models import PlexMatchRequest, PlexMediaContainer, plex_response
+from provider.models import (
+    PlexMatchRequest,
+    PlexMediaContainer,
+    plex_page,
+    plex_response,
+)
 from provider.services.match_service import get_match_service
 
 logger = logging.getLogger(__name__)
@@ -23,12 +30,8 @@ async def match_media(request: Request):
     """
     try:
         body = PlexMatchRequest.model_validate(await request.json())
-    except Exception as exc:
-        logger.error("Failed to parse request body: %s", exc)
-        return JSONResponse(
-            content=plex_response(PlexMediaContainer(identifier="tv.plex.agents.custom.tpdb")),
-            status_code=200,
-        )
+    except (ValidationError, JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(400, "Invalid match request") from exc
 
     logger.debug("Match request: %s", body.model_dump())
     title = body.title
@@ -50,15 +53,11 @@ async def match_media(request: Request):
         )
 
     service = get_match_service()
-    matches = await service.search(title, year=year, media_type=media_type)
+    matches = await service.search(title, year=year, media_type=media_type, guid=body.guid)
+    if not body.manual:
+        matches = matches[:1]
 
-    try:
-        offset = max(int(request.headers.get("X-Plex-Container-Start", "0")), 0)
-        requested_size = int(request.headers.get("X-Plex-Container-Size", "0"))
-    except ValueError:
-        offset = 0
-        requested_size = 0
-    page = matches[offset:offset + requested_size] if requested_size > 0 else matches[offset:]
+    offset, page = plex_page(request, matches)
 
     response = plex_response(PlexMediaContainer(
         identifier="tv.plex.agents.custom.tpdb",

@@ -79,13 +79,13 @@ _SCREENGRAB_SCORE_THRESHOLD = 10
 def _image_kind_from_key(key: str) -> str:
     """Map a field name or label string to a normalized image kind for scoring."""
     k = key.lower()
-    if k in ("poster", "posters"):
+    if k in ("poster", "posters", "poster_image"):
         return "poster"
     if k in ("cover", "cover_image"):
         return "cover"
     if k in ("thumb", "thumbnail"):
         return "thumb"
-    if k in ("background", "bg"):
+    if k in ("background", "bg", "back_image", "background_back"):
         return "background"
     if k == "art":
         return "art"
@@ -182,10 +182,13 @@ def _get_aspect_scores(dimensions: tuple[int, int] | None) -> tuple[int, int]:
 _SCENE_IMAGE_FIELDS: tuple[str, ...] = (
     "poster",
     "posters",
+    "poster_image",
     "cover",
     "cover_image",
     "thumb",
     "background",
+    "back_image",
+    "background_back",
     "art",
     "fanart",
     "backdrop",

@@ -7,9 +7,15 @@ import httpx2
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from provider.services.metadata_service import get_metadata_service
 from provider.mappers.tpdb_to_plex import extract_scene_images
-from provider.models import PlexImage, PlexMediaContainer, PlexMetadata, plex_response
+from provider.models import (
+    PlexImage,
+    PlexMediaContainer,
+    PlexMetadata,
+    plex_page,
+    plex_response,
+)
+from provider.services.metadata_service import get_metadata_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +35,10 @@ def get_image_client() -> httpx2.AsyncClient:
 
 
 async def close_image_client():
+    global _image_client
     if _image_client is not None:
         await _image_client.aclose()
+        _image_client = None
 
 
 @router.get("/library/metadata/person/{person_key}")
@@ -100,13 +108,7 @@ async def get_metadata_images(rating_key: str, request: Request):
     if images is None:
         raise HTTPException(status_code=404, detail="Scene not found")
 
-    try:
-        offset = max(int(request.headers.get("X-Plex-Container-Start", "0")), 0)
-        requested_size = int(request.headers.get("X-Plex-Container-Size", "0"))
-    except ValueError:
-        offset = 0
-        requested_size = 0
-    page = images[offset:offset + requested_size] if requested_size > 0 else images[offset:]
+    offset, page = plex_page(request, images)
 
     return JSONResponse(content=plex_response(PlexMediaContainer(
         identifier="tv.plex.agents.custom.tpdb",
@@ -132,9 +134,13 @@ async def get_metadata_extras(rating_key: str):
     )
 
 
-@router.api_route(
+@router.head(
     "/library/metadata/{rating_key}/image/{image_type}/{image_index}",
-    methods=["GET", "HEAD"],
+    operation_id="head_scene_image",
+)
+@router.get(
+    "/library/metadata/{rating_key}/image/{image_type}/{image_index}",
+    operation_id="get_scene_image",
 )
 async def get_image(rating_key: str, image_type: str, image_index: int):
     """Fetch one TPDB image on demand and return its bytes to Plex."""

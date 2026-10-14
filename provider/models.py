@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -10,9 +11,30 @@ class PlexMatchRequest(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    type: int = 1
-    title: str = ""
+    type: int
+    title: str = Field(min_length=1)
     year: int | None = None
+    manual: int = Field(default=0, ge=0, le=1)
+    guid: str | None = None
+
+
+def plex_page(request: Request, items: list) -> tuple[int, list]:
+    """Read Plex pagination from headers or query parameters."""
+    def value(name: str) -> int:
+        raw = request.headers.get(name)
+        if raw is None:
+            raw = request.query_params.get(name, "0")
+        try:
+            number = int(raw)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, "Invalid pagination") from exc
+        if number < 0:
+            raise HTTPException(400, "Invalid pagination")
+        return number
+
+    offset = value("X-Plex-Container-Start")
+    size = value("X-Plex-Container-Size")
+    return offset, items[offset:offset + size] if size else items[offset:]
 
 
 class PlexImage(BaseModel):
