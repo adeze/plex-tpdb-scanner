@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     tpdb_api_key: str
+    tpdb_prefer_filename: int = 0
     tpdb_port: int = 32500
     tpdb_log_level: str = "INFO"
 

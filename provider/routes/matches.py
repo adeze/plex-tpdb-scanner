@@ -34,7 +34,7 @@ async def match_media(request: Request):
         raise HTTPException(400, "Invalid match request") from exc
 
     logger.debug("Match request: %s", body.model_dump())
-    title = body.title
+    title = body.effective_title
     year = body.year
     media_type = body.type
 

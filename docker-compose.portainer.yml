@@ -9,6 +9,7 @@ services:
       - TPDB_API_KEY=${TPDB_API_KEY}
       - TPDB_PORT=32500
       - TPDB_LOG_LEVEL=INFO
+      - TPDB_PREFER_FILENAME=0
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:32500/health')"]
