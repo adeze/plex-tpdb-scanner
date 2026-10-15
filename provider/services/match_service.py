@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 from rapidfuzz import fuzz
 
@@ -67,7 +68,16 @@ class MatchService(MetadataService):
             score += 10
         return max(0, min(100, round(score)))
 
-    async def search(self, title: str, year: Optional[int] = None, media_type: int = 1) -> list[dict]:
+    async def search(self, title: str, year: Optional[int] = None, media_type: int = 1,
+                     guid: str | None = None) -> list[dict]:
+        if guid:
+            parsed = urlsplit(guid)
+            if parsed.scheme in {"tpdb", "tv.plex.agents.custom.tpdb"}:
+                identifier = unquote(parsed.netloc + parsed.path).removeprefix("movie/").removeprefix("clip/")
+                if identifier and "/" not in identifier:
+                    scene = await self.client.get_scene(identifier)
+                    if scene:
+                        return [map_scene_to_match(scene, score=100, media_type=media_type)]
         logger.info("Searching for: %s (year=%s, type=%d)", title, year, media_type)
         normalized_title = normalize_match_text(title)
         results = await self.client.search_scenes(normalized_title, year=year)
@@ -112,5 +122,7 @@ def get_match_service() -> MatchService:
 
 
 async def close_match_service():
+    global _match_service
     if _match_service is not None:
         await _match_service.close()
+        _match_service = None

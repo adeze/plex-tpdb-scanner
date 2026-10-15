@@ -42,7 +42,7 @@ class MetadataRouteTests(unittest.IsolatedAsyncioTestCase):
         ])
 
         with patch("provider.routes.metadata.get_metadata_service", return_value=service):
-            response = await metadata_routes.get_metadata_images("scene-slug", Mock(headers={}))
+            response = await metadata_routes.get_metadata_images("scene-slug", Mock(headers={}, query_params={}))
 
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 200)
@@ -56,7 +56,7 @@ class MetadataRouteTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("provider.routes.metadata.get_metadata_service", return_value=service):
             with self.assertRaises(HTTPException) as context:
-                await metadata_routes.get_metadata_images("missing-scene", Mock(headers={}))
+                await metadata_routes.get_metadata_images("missing-scene", Mock(headers={}, query_params={}))
 
         self.assertEqual(context.exception.status_code, 404)
         service.get_images.assert_awaited_once_with("missing-scene")
@@ -66,7 +66,7 @@ class MetadataRouteTests(unittest.IsolatedAsyncioTestCase):
         service.get_images = AsyncMock(return_value=[])
 
         with patch("provider.routes.metadata.get_metadata_service", return_value=service):
-            response = await metadata_routes.get_metadata_images("scene-slug", Mock(headers={}))
+            response = await metadata_routes.get_metadata_images("scene-slug", Mock(headers={}, query_params={}))
 
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 200)

@@ -21,14 +21,6 @@ async def get_manifest():
                     "type": 1,  # Movie type
                     "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
                 },
-                {
-                    "type": 12,  # Clip type
-                    "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
-                },
-                {
-                    "type": 7,  # Person type
-                    "Scheme": [{"scheme": PROVIDER_IDENTIFIER}],
-                },
             ],
             "Feature": [
                 {"type": "match", "key": "/library/metadata/matches"},

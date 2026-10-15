@@ -13,6 +13,14 @@ Plex Media Server  <-->  TPDB Provider (FastAPI)  <-->  ThePornDB API
 
 ## Requirements
 
+The discovery manifest advertises movies (type 1), as documented by Plex for
+custom metadata providers. Clip and person endpoints remain available for
+existing references, but are not advertised as supported library types.
+Automatic matching returns one best result; `manual=1` returns ranked candidates.
+TPDB GUID hints resolve directly when possible, with title search as a fallback.
+Match and image pagination accept Plex headers or query parameters, with headers
+taking precedence. Malformed match requests and pagination return HTTP 400.
+
 - Plex Media Server 1.43 or later
 - Docker (recommended) or Python 3.11+
 - ThePornDB API key

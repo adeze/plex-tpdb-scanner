@@ -174,5 +174,7 @@ def get_metadata_service() -> MetadataService:
 
 
 async def close_metadata_service():
+    global _metadata_service
     if _metadata_service is not None:
         await _metadata_service.close()
+        _metadata_service = None
