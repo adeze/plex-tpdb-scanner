@@ -12,6 +12,26 @@ from provider.services.metadata_service import MetadataService
 
 
 class MapperEnrichmentTests(unittest.TestCase):
+    def test_cast_uses_parent_portrait_when_site_performer_has_no_image(self):
+        scene = {
+            "id": "scene-id",
+            "title": "Scene",
+            "performers": [{
+                "id": "site-performer-id",
+                "name": "Performer",
+                "image": None,
+                "thumbnail": None,
+                "face": None,
+                "parent": {"id": "parent-id", "image": "https://img/portrait.jpg"},
+            }],
+        }
+
+        for mapper in (map_scene_to_metadata, map_scene_to_match):
+            with self.subTest(mapper=mapper.__name__):
+                role = mapper(scene)["Role"][0]
+                self.assertEqual(role["thumb"], "https://img/portrait.jpg")
+                self.assertEqual(role["key"], "/library/metadata/person/site-performer-id")
+
     def test_metadata_uses_image_fallback_director_and_collection(self):
         scene = {
             "id": "123",

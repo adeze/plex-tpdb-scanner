@@ -515,10 +515,11 @@ def _map_roles(performers: Any) -> list[dict[str, str]]:
             role["id"] = f"tv.plex.agents.custom.tpdb://person/{performer_id}"
             role["key"] = f"/library/metadata/person/{performer_id}"
             role["url"] = _performer_web_url(performer, performer_id)
-        performer_image = _get_first_image(
-            performer,
-            ("image", "poster", "thumb", "photo", "avatar", "face"),
-        )
+        image_fields = ("image", "poster", "thumb", "photo", "avatar", "face", "thumbnail")
+        performer_image = _get_first_image(performer, image_fields)
+        parent = performer.get("parent")
+        if not performer_image and isinstance(parent, dict):
+            performer_image = _get_first_image(parent, image_fields)
         if performer_image:
             role["thumb"] = performer_image
         roles.append(role)
